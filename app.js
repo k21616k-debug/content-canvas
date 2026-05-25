@@ -986,6 +986,8 @@ function renderPanel() {
           <div class="angle-reason">${esc(research.suggestedCta)}</div>
         </div>` : ''}
         <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果到備註</button>
+        <button class="expand-btn" id="btn-titles" style="margin-top:6px">🎬 YouTube 標題建議</button>
+        <div id="titles-result"></div>
       </div>
       ` : ''}
 
@@ -1127,6 +1129,27 @@ function renderPanel() {
       node.user = node.user ? node.user + '\n\n' + parts.join('\n') : parts.join('\n');
       saveState();
       renderPanel();
+    });
+
+    // YouTube title suggestions
+    $('#btn-titles')?.addEventListener('click', async () => {
+      const btn = $('#btn-titles');
+      const container = $('#titles-result');
+      btn.disabled = true;
+      btn.textContent = '🎬 產生中...';
+      const result = await aiTitles(node.id);
+      btn.disabled = false;
+      btn.textContent = '🎬 YouTube 標題建議';
+      if (result?.options) {
+        container.innerHTML = result.options.map((opt, i) => `
+          <div class="angle-card" style="margin-top:8px">
+            <div class="angle-header"><span class="angle-num">${i + 1}</span><strong>${esc(opt.title)}</strong></div>
+            ${opt.subtitle ? `<div class="angle-reason" style="font-size:11px;color:#94a3b8">${esc(opt.subtitle)}</div>` : ''}
+            <div class="angle-reason">縮圖文字：<strong>${esc(opt.thumbnail)}</strong></div>
+            <div class="angle-how">📸 ${esc(opt.thumbnailDesc)}</div>
+          </div>
+        `).join('');
+      }
     });
 
     // Panel AI suggestion adopt/dismiss
@@ -1481,6 +1504,59 @@ async function fetchSuggestion(nodeId) {
   }
 }
 
+// ── AI: Auto-classify node ──
+async function aiClassifyNode(node) {
+  try {
+    const res = await fetch('/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: node.main.topic, userNotes: node.user || '' }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.job && !node.main.job) node.main.job = data.job;
+    if (data.cta && !node.main.cta) node.main.cta = data.cta;
+    if (data.stage) node.positions.journey = { ...node.positions.journey, stage: data.stage };
+    saveState();
+    render();
+    if (state.selectedNodeId === node.id) renderPanel(node.id);
+  } catch { /* silent fail */ }
+}
+
+// ── AI: YouTube title suggestions ──
+async function aiTitles(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  try {
+    const res = await fetch('/api/titles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: node.main.topic,
+        hook: node.aiResearch?.suggestedHook,
+        angles: node.filmingAngles,
+        research: node.aiResearch,
+        job: node.main.job,
+      }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+// ── AI: Brief polish ──
+async function aiBriefPolish(topic, fields) {
+  try {
+    const res = await fetch('/api/brief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic, fields }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
 // ── AI Puzzle: Rule-based Canvas Analyzer ──
 
 function analyzeCanvas() {
@@ -1763,15 +1839,37 @@ function analyzeCanvas() {
   return suggestions;
 }
 
-function runGlobalReview() {
+async function runGlobalReview() {
   const suggestions = analyzeCanvas();
   state.ghostNodes = suggestions;
   render();
-  // Show review panel
-  showReviewPanel(suggestions);
+  showReviewPanel(suggestions, null);
+
+  // Try AI review in parallel
+  try {
+    const nodes = [...state.nodes.values()].map(n => ({
+      topic: n.main.topic, job: n.main.job, cta: n.main.cta,
+      stage: n.positions.journey?.stage, isMain: n.isMain,
+      hook: n.aiResearch?.suggestedHook || '',
+      angles: (n.filmingAngles || []).map(a => a.title).join('、'),
+    }));
+    const connections = state.connections.map(c => ({
+      fromTopic: state.nodes.get(c.from)?.main.topic || '?',
+      toTopic: state.nodes.get(c.to)?.main.topic || '?',
+    }));
+    const res = await fetch('/api/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodes, connections }),
+    });
+    if (res.ok) {
+      const aiReview = await res.json();
+      showReviewPanel(suggestions, aiReview);
+    }
+  } catch { /* AI review unavailable, rule-based still shown */ }
 }
 
-function showReviewPanel(suggestions) {
+function showReviewPanel(suggestions, aiReview) {
   const empty = $('#panel-empty');
   const detail = $('#panel-detail');
   const brief = $('#panel-brief');
@@ -1798,7 +1896,34 @@ function showReviewPanel(suggestions) {
   const connSugs = suggestions.filter(s => s.type === 'connection');
   const nodeSugs = suggestions.filter(s => s.type === 'new-node');
 
-  let html = `<div class="review-summary">找到 ${suggestions.length} 個建議</div>`;
+  let html = '';
+
+  // AI-powered review section
+  if (aiReview) {
+    const scoreColor = aiReview.overallScore >= 7 ? '#22c55e' : aiReview.overallScore >= 4 ? '#f59e0b' : '#ef4444';
+    html += `<div class="ai-review-header">
+      <div class="ai-review-score" style="border-color:${scoreColor};color:${scoreColor}">${aiReview.overallScore}/10</div>
+      <div class="ai-review-summary">${esc(aiReview.summary || '')}</div>
+    </div>`;
+    if (aiReview.issues && aiReview.issues.length > 0) {
+      html += `<div class="review-section-title">🤖 AI 策略分析</div>`;
+      for (const issue of aiReview.issues) {
+        const sevClass = issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-medium' : 'sev-low';
+        const typeEmoji = { duplicate: '🔁', gap: '🕳️', quality: '💡', conflict: '⚡', opportunity: '🎯' }[issue.type] || '📌';
+        html += `
+          <div class="review-card review-card-ai ${sevClass}">
+            <div class="review-card-topic">${typeEmoji} ${esc(issue.title)}</div>
+            <div class="review-card-reason">${esc(issue.detail)}</div>
+            <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
+          </div>`;
+      }
+    }
+    html += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">`;
+  } else if (suggestions.length > 0) {
+    html += `<div class="ai-review-loading">🤖 AI 策略分析載入中...</div>`;
+  }
+
+  html += `<div class="review-summary">找到 ${suggestions.length} 個結構建議</div>`;
 
   if (restructSugs.length > 0) {
     html += `<div class="review-section-title">🔄 建議調整架構</div>`;
@@ -2151,7 +2276,10 @@ function generateNodeBrief(nodeId) {
     html += `<div class="brief-hint">💡 先在節點詳情按「展開內容」取得拍攝方向，才能展開腳本</div>`;
   }
 
-  // ── 複製按鈕 ──
+  // ── AI 潤稿 + 複製按鈕 ──
+  html += `<button class="expand-btn" id="btn-polish-brief" style="margin-top:12px;">
+    ✨ AI 潤稿 Brief
+  </button>`;
   html += `<button class="expand-btn" id="btn-copy-brief" style="margin-top:8px; border-style:solid; background:rgba(16,185,129,0.08); border-color:#10b981; color:#059669;">
     📋 複製 Brief 到剪貼簿
   </button>`;
@@ -2171,6 +2299,39 @@ function generateNodeBrief(nodeId) {
     } catch (err) {
       btn.textContent = '❌ 失敗，再試一次';
       btn.disabled = false;
+    }
+  });
+
+  // AI polish brief
+  $('#btn-polish-brief')?.addEventListener('click', async () => {
+    const btn = $('#btn-polish-brief');
+    btn.disabled = true;
+    btn.textContent = '✨ 潤稿中...';
+    const fields = {
+      job: node.main.job ? node.main.job + ' — ' + (JOB_DESC[node.main.job] || '') : '',
+      person: personText,
+      coreMessage: coreMsg,
+      nonNegotiables: nonNeg,
+      shortClips: shortClips,
+      frameworkLink: framework,
+    };
+    const result = await aiBriefPolish(node.main.topic, fields);
+    btn.disabled = false;
+    btn.textContent = '✨ AI 潤稿 Brief';
+    if (result) {
+      // Store polished version and re-render
+      node._polishedBrief = result;
+      saveState();
+      // Update the brief fields in-place
+      const fieldEls = document.querySelectorAll('.brief-field-numbered .brief-field-value');
+      const polished = [result.job, result.person, result.coreMessage, result.nonNegotiables, result.shortClips, result.frameworkLink];
+      fieldEls.forEach((el, i) => {
+        if (polished[i]) {
+          el.textContent = polished[i];
+          el.style.borderLeft = '3px solid #8b5cf6';
+          el.style.paddingLeft = '8px';
+        }
+      });
     }
   });
 
@@ -2366,6 +2527,10 @@ function bindEvents() {
     hideModal();
     selectNode(node.id);
     render();
+    // Auto-classify with AI if Job not specified
+    if (!node.main.job) {
+      aiClassifyNode(node).catch(() => {});
+    }
   });
 
   $('#modal-cancel').addEventListener('click', hideModal);
