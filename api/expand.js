@@ -39,7 +39,7 @@ angles 請給 3 個最有潛力的拍攝角度。
 盡量具體、接地氣，像是騎士真正會關心的事情。`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }],
     });

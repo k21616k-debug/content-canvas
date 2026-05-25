@@ -31,7 +31,7 @@ ${userNotes ? `備註：${userNotes}` : ''}
 - D 安心（買、通路、比價、保固、保養）→ Job=轉換`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });

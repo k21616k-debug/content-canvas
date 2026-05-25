@@ -40,7 +40,7 @@ export default async function handler(req, res) {
 - 短片潛力點要具體到「哪個動作/瞬間」`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1200,
       messages: [{ role: 'user', content: prompt }],
     });

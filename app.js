@@ -2205,7 +2205,7 @@ function generateNodeBrief(nodeId) {
   let nonNeg = '';
   if (hasAngles) {
     nonNeg = node.filmingAngles.map((a, i) =>
-      `${i + 1}. ${a.title}\n   為什麼：${a.why}\n   拍法：${a.how}`
+      `${i + 1}. ${a.title}\n   為什麼：${a.why}\n   拍法：${a.howToShoot || '待定'}`
     ).join('\n\n');
   }
   if (r?.features) nonNeg += (nonNeg ? '\n\n' : '') + '產品特色（不可刪）：' + r.features;

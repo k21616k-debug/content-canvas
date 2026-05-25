@@ -37,7 +37,7 @@ ${user?.notes ? `使用者補充：${user.notes}` : ''}
 - 直接輸出純文字，不要 markdown 格式`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });

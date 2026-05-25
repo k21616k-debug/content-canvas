@@ -40,7 +40,7 @@ ${angles ? `拍攝角度：${angles.map(a => a.title).join('、')}` : ''}
 每組標題要差異夠大，不要只是換詞。`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }],
     });

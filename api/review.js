@@ -59,7 +59,7 @@ ${connsText}
 issues 最多 6 個，按 severity 排序。`;
 
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-20250414',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }],
     });
