@@ -1,5 +1,33 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ── Password Gate ── */
+#password-gate {
+  position: fixed; inset: 0; z-index: 9999;
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  display: flex; align-items: center; justify-content: center;
+}
+#password-gate.hidden { display: none; }
+.gate-box {
+  background: #fff; border-radius: 16px; padding: 40px 36px; text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3); min-width: 300px;
+}
+.gate-logo { font-size: 48px; display: block; margin-bottom: 8px; }
+.gate-box h2 { font-size: 20px; color: #1e293b; margin-bottom: 4px; }
+.gate-box p { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+#gate-input {
+  width: 100%; padding: 10px 14px; border: 2px solid #e2e8f0; border-radius: 8px;
+  font-size: 16px; text-align: center; outline: none; transition: border-color 0.2s;
+}
+#gate-input:focus { border-color: #3b82f6; }
+#gate-submit {
+  width: 100%; margin-top: 12px; padding: 10px; border: none; border-radius: 8px;
+  background: #3b82f6; color: #fff; font-size: 15px; font-weight: 600;
+  cursor: pointer; transition: background 0.2s;
+}
+#gate-submit:hover { background: #2563eb; }
+#gate-error { color: #ef4444; font-size: 13px; margin-top: 8px; }
+#gate-error.hidden { display: none; }
+
 :root {
   --bg: #f8fafc;
   --header-bg: #1e293b;

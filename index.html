@@ -7,6 +7,18 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Password Gate -->
+  <div id="password-gate">
+    <div class="gate-box">
+      <span class="gate-logo">🗺️</span>
+      <h2>內容策略畫布</h2>
+      <p>請輸入密碼</p>
+      <input type="password" id="gate-input" placeholder="密碼" autofocus>
+      <button id="gate-submit">進入</button>
+      <p id="gate-error" class="hidden">密碼錯誤</p>
+    </div>
+  </div>
+
   <header id="header">
     <div class="header-left">
       <span class="logo">🗺️</span>
@@ -120,6 +132,28 @@
     </div>
   </div>
 
+  <script>
+  (function(){
+    const HASH = 'c8b9be9de8f449100edeb9693d22b688454283c0406ef19a6ba89e0fa7a5e0f7';
+    const gate = document.getElementById('password-gate');
+    if (sessionStorage.getItem('canvas-auth') === 'ok') { gate.classList.add('hidden'); }
+    async function check() {
+      const pw = document.getElementById('gate-input').value;
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+      const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+      if (hash === HASH) {
+        sessionStorage.setItem('canvas-auth','ok');
+        gate.classList.add('hidden');
+      } else {
+        document.getElementById('gate-error').classList.remove('hidden');
+        document.getElementById('gate-input').value = '';
+        document.getElementById('gate-input').focus();
+      }
+    }
+    document.getElementById('gate-submit').addEventListener('click', check);
+    document.getElementById('gate-input').addEventListener('keydown', function(e){ if(e.key==='Enter') check(); });
+  })();
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
