@@ -780,6 +780,32 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
   padding: 4px 8px; background: rgba(16,185,129,0.06); border-radius: 4px;
 }
 
+/* Ask AI */
+.ask-section { margin-top: 8px; }
+.ask-section label { font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px; display: block; }
+.ask-input-row { display: flex; gap: 6px; }
+.ask-input {
+  flex: 1; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px;
+  font-size: 13px; outline: none; transition: border-color .15s;
+}
+.ask-input:focus { border-color: #3b82f6; }
+.ask-send-btn {
+  padding: 7px 14px; background: #3b82f6; color: #fff; border: none; border-radius: 6px;
+  font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.ask-send-btn:hover { background: #2563eb; }
+.ask-send-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ask-answer {
+  margin-top: 10px; padding: 10px 12px; background: #f0f9ff; border-radius: 8px;
+  font-size: 13px; line-height: 1.6; color: #1e293b; border-left: 3px solid #3b82f6;
+}
+.ask-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-action-btn {
+  padding: 5px 12px; background: #fff; border: 1px solid #3b82f6; border-radius: 6px;
+  color: #3b82f6; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s;
+}
+.ask-action-btn:hover { background: #3b82f6; color: #fff; }
+
 /* Responsive */
 @media (max-width: 900px) {
   #panel { width: 280px; }

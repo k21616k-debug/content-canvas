@@ -1007,6 +1007,15 @@ function renderPanel() {
           ${node.aiSuggest.map((s, i) => `<div class="chip"><span class="chip-text">${esc(s)}</span><button class="ai-action-btn adopt panel-ai-adopt" data-idx="${i}" title="採用">採用</button><button class="ai-action-btn dismiss panel-ai-dismiss" data-idx="${i}" title="移除">✕</button></div>`).join('')}
         </div>
       ` : ''}
+      <div class="detail-divider"></div>
+      <div class="ask-section">
+        <label>💬 針對這個節點提問</label>
+        <div class="ask-input-row">
+          <input type="text" id="ask-node-input" class="ask-input" placeholder="例：這個主題的 CTA 怎麼寫比較好？">
+          <button id="ask-node-btn" class="ask-send-btn">送出</button>
+        </div>
+        <div id="ask-node-result"></div>
+      </div>
       <div class="detail-actions">
         <button class="delete-btn" id="btn-delete-node">刪除</button>
         <button class="save-btn" id="btn-save-node">儲存</button>
@@ -1150,6 +1159,23 @@ function renderPanel() {
           </div>
         `).join('');
       }
+    });
+
+    // Node-specific ask
+    $('#ask-node-btn')?.addEventListener('click', async () => {
+      const input = $('#ask-node-input');
+      const q = input.value.trim();
+      if (!q) return;
+      const btn = $('#ask-node-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳';
+      const result = await aiAsk(q, node.id);
+      btn.disabled = false;
+      btn.textContent = '送出';
+      if (result) renderAskResult($('#ask-node-result'), result);
+    });
+    $('#ask-node-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') $('#ask-node-btn')?.click();
     });
 
     // Panel AI suggestion adopt/dismiss
@@ -1502,6 +1528,91 @@ async function fetchSuggestion(nodeId) {
   } catch (err) {
     console.error('AI suggest failed:', err);
   }
+}
+
+// ── AI: Ask (global or node-specific) ──
+async function aiAsk(question, focusNodeId) {
+  const nodes = [...state.nodes.values()].map(n => ({
+    id: n.id, topic: n.main.topic, job: n.main.job, cta: n.main.cta,
+    stage: n.positions.journey?.stage, isMain: n.isMain,
+    hook: n.aiResearch?.suggestedHook || '',
+    user: n.user || '',
+    angles: (n.filmingAngles || []).map(a => a.title).join('、'),
+  }));
+  const connections = state.connections.map(c => ({
+    fromTopic: state.nodes.get(c.from)?.main.topic || '?',
+    toTopic: state.nodes.get(c.to)?.main.topic || '?',
+  }));
+  const context = { nodes, connections };
+  if (focusNodeId) {
+    const fn = state.nodes.get(focusNodeId);
+    if (fn) context.focusNode = { id: fn.id, topic: fn.main.topic };
+  }
+  const res = await fetch('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, context }),
+  });
+  if (!res.ok) throw new Error('API error');
+  return await res.json();
+}
+
+function executeAction(action) {
+  if (action.type === 'update') {
+    const node = state.nodes.get(action.nodeId);
+    if (node && action.field && action.value) {
+      if (action.field === 'job') node.main.job = action.value;
+      else if (action.field === 'cta') node.main.cta = action.value;
+      else if (action.field === 'topic') node.main.topic = action.value;
+      saveState(); render();
+    }
+  } else if (action.type === 'connect') {
+    const exists = state.connections.some(c =>
+      (c.from === action.fromId && c.to === action.toId) ||
+      (c.from === action.toId && c.to === action.fromId)
+    );
+    if (!exists && state.nodes.has(action.fromId) && state.nodes.has(action.toId)) {
+      state.connections.push({ from: action.fromId, to: action.toId });
+      saveState(); render();
+    }
+  } else if (action.type === 'move-stage') {
+    const node = state.nodes.get(action.nodeId);
+    if (node && action.stage) {
+      node.positions.journey = { ...node.positions.journey, stage: action.stage };
+      saveState(); render();
+    }
+  } else if (action.type === 'new-node') {
+    const count = state.nodes.size;
+    const x = 60 + (count % 4) * 280;
+    const y = 60 + Math.floor(count / 4) * 220;
+    createNode({ topic: action.topic, job: action.job || '', cta: '', isMain: false }, x, y);
+    const node = [...state.nodes.values()].find(n => n.main.topic === action.topic);
+    if (node && action.stage) node.positions.journey = { stage: action.stage };
+    saveState(); render();
+  }
+}
+
+function renderAskResult(container, result) {
+  let html = `<div class="ask-answer">${esc(result.answer)}</div>`;
+  if (result.actions?.length > 0) {
+    html += `<div class="ask-actions">`;
+    result.actions.forEach((a, i) => {
+      html += `<button class="ai-action-btn adopt ask-action-btn" data-action-idx="${i}">${esc(a.label || '套用')}</button>`;
+    });
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+  container.querySelectorAll('.ask-action-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.actionIdx, 10);
+      const action = result.actions[idx];
+      if (action) {
+        executeAction(action);
+        btn.textContent = '✅ 已套用';
+        btn.disabled = true;
+      }
+    });
+  });
 }
 
 // ── AI: Auto-classify node ──
@@ -2020,7 +2131,35 @@ function showReviewPanel(suggestions, aiReview) {
     }
   }
 
+  html += `
+    <div class="detail-divider"></div>
+    <div class="ask-section">
+      <label>💬 向 AI 提問（全域）</label>
+      <div class="ask-input-row">
+        <input type="text" id="ask-global-input" class="ask-input" placeholder="例：目前策略有什麼盲點？">
+        <button id="ask-global-btn" class="ask-send-btn">送出</button>
+      </div>
+      <div id="ask-global-result"></div>
+    </div>`;
+
   $('#review-content').innerHTML = html;
+
+  // Global ask
+  $('#ask-global-btn')?.addEventListener('click', async () => {
+    const input = $('#ask-global-input');
+    const q = input.value.trim();
+    if (!q) return;
+    const btn = $('#ask-global-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳';
+    const result = await aiAsk(q);
+    btn.disabled = false;
+    btn.textContent = '送出';
+    if (result) renderAskResult($('#ask-global-result'), result);
+  });
+  $('#ask-global-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#ask-global-btn')?.click();
+  });
 
   // Bind adopt/dismiss
   $$('.ghost-adopt').forEach(btn => {
