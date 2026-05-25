@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>內容策略畫布 — 摩托麻吉</title>
+  <title>摩托麻吉 — 內容工具</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div id="password-gate">
     <div class="gate-box">
       <span class="gate-logo">🗺️</span>
-      <h2>內容策略畫布</h2>
+      <h2>摩托麻吉內容工具</h2>
       <p>請輸入密碼</p>
       <input type="password" id="gate-input" placeholder="密碼" autofocus>
       <button id="gate-submit">進入</button>
@@ -19,116 +19,27 @@
     </div>
   </div>
 
-  <header id="header">
-    <div class="header-left">
-      <span class="logo">🗺️</span>
-      <div class="project-switcher">
-        <select id="project-select"></select>
-        <button id="btn-new-project" class="project-btn" title="新增專案">＋</button>
-        <button id="btn-delete-project" class="project-btn danger" title="刪除此專案">🗑</button>
+  <!-- Hub -->
+  <div id="hub" class="hidden">
+    <div class="hub-container">
+      <div class="hub-header">
+        <span class="hub-logo">🗺️</span>
+        <h1>摩托麻吉</h1>
+        <p>內容策略工具</p>
       </div>
-    </div>
-    <nav class="view-tabs">
-      <button data-view="topic" class="tab active">議題順序</button>
-      <button data-view="material" class="tab">素材準備</button>
-      <button data-view="journey" class="tab">購買階段</button>
-    </nav>
-    <div class="header-right">
-      <span id="node-count">0 個節點</span>
-      <button id="btn-connect" class="header-btn" title="連線模式">🔗</button>
-      <button id="btn-review" class="header-btn review-btn" title="AI 全局檢討">🧩 檢討</button>
-      <button id="btn-brief" class="header-btn primary">生成 Brief</button>
-    </div>
-  </header>
-
-  <main id="main">
-    <div id="canvas-area">
-      <div id="topic-toolbar" class="hidden">
-        <div class="sub-tabs">
-          <button class="sub-tab active" data-mode="free">自由區塊</button>
-          <button class="sub-tab" data-mode="list">條列</button>
-        </div>
-        <div id="zoom-controls">
-          <button id="zoom-out" title="縮小">−</button>
-          <span id="zoom-level">100%</span>
-          <button id="zoom-in" title="放大">＋</button>
-          <button id="zoom-reset" title="重設">⟲</button>
+      <div class="hub-grid">
+        <a href="product.html" class="hub-card">
+          <span class="hub-card-icon">📦</span>
+          <h2>商品企劃</h2>
+          <p>產品開箱、評測、比較<br>購買旅程 × 內容策略</p>
+        </a>
+        <div class="hub-card hub-card-disabled">
+          <span class="hub-card-icon">🎤</span>
+          <h2>訪談企劃</h2>
+          <p>人物故事、專家觀點<br>即將推出</p>
+          <span class="hub-card-badge">Coming Soon</span>
         </div>
       </div>
-      <svg id="connections-svg">
-        <defs>
-          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
-          </marker>
-          <marker id="arrowhead-active" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
-          </marker>
-        </defs>
-      </svg>
-      <div id="canvas"></div>
-      <button id="btn-add" title="新增節點 (或雙擊畫布)">＋ 新增節點</button>
-    </div>
-
-    <aside id="panel">
-      <div id="panel-empty">
-        <p>點選節點查看詳情</p>
-        <p class="hint">雙擊畫布或按「＋」新增節點</p>
-      </div>
-      <div id="panel-detail" class="hidden">
-        <div class="panel-header">
-          <h2 id="panel-title"></h2>
-          <button id="panel-close" title="關閉">✕</button>
-        </div>
-        <div id="panel-content"></div>
-      </div>
-      <div id="panel-brief" class="hidden">
-        <div class="panel-header">
-          <h2>Brief</h2>
-          <button id="brief-close" title="關閉">✕</button>
-        </div>
-        <div id="brief-content"></div>
-      </div>
-      <div id="panel-review" class="hidden">
-        <div class="panel-header">
-          <h2>🧩 AI 全局檢討</h2>
-          <button id="review-close" title="關閉">✕</button>
-        </div>
-        <div id="review-content"></div>
-      </div>
-    </aside>
-  </main>
-
-  <!-- Node creation modal -->
-  <div id="modal-overlay" class="hidden">
-    <div id="modal">
-      <h3>新增節點</h3>
-      <form id="node-form">
-        <label>
-          主題 <span class="required">*</span>
-          <input type="text" id="input-topic" required placeholder="例：安全帽選購指南" autofocus>
-        </label>
-        <label>
-          Job
-          <select id="input-job">
-            <option value="">未指定</option>
-            <option value="吸引">吸引 — 拉新觀眾進來</option>
-            <option value="培育">培育 — 加深興趣與信任</option>
-            <option value="轉換">轉換 — 推動購買行動</option>
-          </select>
-        </label>
-        <label>
-          CTA
-          <input type="text" id="input-cta" placeholder="例：留言你的帽款">
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="input-main">
-          設為主節點
-        </label>
-        <div class="modal-actions">
-          <button type="button" id="modal-cancel">取消</button>
-          <button type="submit" class="primary">建立</button>
-        </div>
-      </form>
     </div>
   </div>
 
@@ -136,7 +47,11 @@
   (function(){
     const HASH = 'c8b9be9de8f449100edeb9693d22b688454283c0406ef19a6ba89e0fa7a5e0f7';
     const gate = document.getElementById('password-gate');
-    if (sessionStorage.getItem('canvas-auth') === 'ok') { gate.classList.add('hidden'); }
+    const hub = document.getElementById('hub');
+    if (sessionStorage.getItem('canvas-auth') === 'ok') {
+      gate.classList.add('hidden');
+      hub.classList.remove('hidden');
+    }
     async function check() {
       const pw = document.getElementById('gate-input').value;
       const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
@@ -144,6 +59,7 @@
       if (hash === HASH) {
         sessionStorage.setItem('canvas-auth','ok');
         gate.classList.add('hidden');
+        hub.classList.remove('hidden');
       } else {
         document.getElementById('gate-error').classList.remove('hidden');
         document.getElementById('gate-input').value = '';
@@ -154,6 +70,5 @@
     document.getElementById('gate-input').addEventListener('keydown', function(e){ if(e.key==='Enter') check(); });
   })();
   </script>
-  <script type="module" src="app.js"></script>
 </body>
 </html>

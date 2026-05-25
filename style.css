@@ -28,6 +28,45 @@
 #gate-error { color: #ef4444; font-size: 13px; margin-top: 8px; }
 #gate-error.hidden { display: none; }
 
+/* ── Hub Page ── */
+#hub {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  display: flex; align-items: center; justify-content: center;
+}
+#hub.hidden { display: none; }
+.hub-container { text-align: center; max-width: 600px; padding: 40px 20px; }
+.hub-header { margin-bottom: 40px; }
+.hub-logo { font-size: 56px; display: block; margin-bottom: 12px; }
+.hub-header h1 { font-size: 28px; color: #f1f5f9; font-weight: 700; margin-bottom: 4px; }
+.hub-header p { font-size: 15px; color: #94a3b8; }
+.hub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.hub-card {
+  background: #fff; border-radius: 16px; padding: 32px 24px; text-decoration: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15); transition: transform .2s, box-shadow .2s;
+  position: relative; cursor: pointer; display: block;
+}
+.hub-card:hover { transform: translateY(-4px); box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+.hub-card-icon { font-size: 40px; display: block; margin-bottom: 12px; }
+.hub-card h2 { font-size: 18px; color: #1e293b; margin-bottom: 8px; }
+.hub-card p { font-size: 13px; color: #64748b; line-height: 1.6; }
+.hub-card-disabled {
+  opacity: .5; cursor: default; pointer-events: none;
+}
+.hub-card-badge {
+  position: absolute; top: 12px; right: 12px;
+  background: #e2e8f0; color: #64748b; font-size: 10px; font-weight: 600;
+  padding: 3px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .5px;
+}
+.back-link {
+  color: #f1f5f9; text-decoration: none; font-size: 20px; margin-right: 8px;
+  opacity: .7; transition: opacity .15s;
+}
+.back-link:hover { opacity: 1; }
+@media (max-width: 500px) {
+  .hub-grid { grid-template-columns: 1fr; }
+}
+
 :root {
   --bg: #f8fafc;
   --header-bg: #1e293b;
