@@ -1,0 +1,8 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "",
+  "rewrites": [
+    { "source": "/api/expand", "destination": "/api/expand" },
+    { "source": "/api/script", "destination": "/api/script" }
+  ]
+}
