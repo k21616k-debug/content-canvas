@@ -1443,7 +1443,7 @@ function renderPanel() {
 
       ${(node.hooks?.length > 0) ? `
       <div class="detail-divider"></div>
-      <details class="panel-accordion">
+      <details class="panel-accordion" open>
         <summary>🎤 建議 Hook — 3 種風格選一個</summary>
         ${node.hooks.map((h, i) => `
           <div class="hook-card">
@@ -1464,7 +1464,7 @@ function renderPanel() {
 
       ${angles.length > 0 ? `
       <div class="detail-divider"></div>
-      <details class="panel-accordion">
+      <details class="panel-accordion" open>
         <summary>🎬 建議拍攝方向 (${angles.length})</summary>
         ${angles.map((a, i) => `
           <div class="angle-card">
@@ -2644,7 +2644,7 @@ function showReviewPanel(suggestions, aiReview) {
   review.classList.remove('hidden');
   state.selectedNodeId = null;
 
-  if (suggestions.length === 0 && (!aiReview || !aiReview.issues || aiReview.issues.length === 0)) {
+  if (suggestions.length === 0 && (!aiReview || (!aiReview.issues?.length && !aiReview.quickWins?.length))) {
     const hasSkipped = state.dismissedSuggestions.size > 0;
     $('#review-content').innerHTML = `
       <div class="review-perfect">
