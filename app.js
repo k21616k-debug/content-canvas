@@ -1248,20 +1248,30 @@ function renderConnections(svg) {
     if (toPt.side === 'bottom') y2 += arrowPad;
     if (toPt.side === 'top')    y2 -= arrowPad;
 
-    // Tight bezier: control points extend perpendicular to each edge
-    const dist  = Math.hypot(x2 - x1, y2 - y1);
-    const cpLen = Math.min(Math.max(16, dist * 0.2), 80);
+    // Near-straight bezier: blend edge-perpendicular with target direction
+    // so diagonal connections don't produce wide S-curves
+    const totalDx = x2 - x1, totalDy = y2 - y1;
+    const dist = Math.hypot(totalDx, totalDy);
+    const ndx = dist > 0 ? totalDx / dist : 0;
+    const ndy = dist > 0 ? totalDy / dist : 1;
+    const cpDist = Math.max(6, Math.min(dist * 0.25, 40));
 
-    let cx1, cy1, cx2, cy2;
-    if (fromPt.side === 'right')  { cx1 = x1 + cpLen; cy1 = y1; }
-    if (fromPt.side === 'left')   { cx1 = x1 - cpLen; cy1 = y1; }
-    if (fromPt.side === 'bottom') { cx1 = x1; cy1 = y1 + cpLen; }
-    if (fromPt.side === 'top')    { cx1 = x1; cy1 = y1 - cpLen; }
+    // Edge-perpendicular outward unit vectors
+    let px1 = 0, py1 = 0, px2 = 0, py2 = 0;
+    if (fromPt.side === 'right')  px1 =  1;
+    if (fromPt.side === 'left')   px1 = -1;
+    if (fromPt.side === 'bottom') py1 =  1;
+    if (fromPt.side === 'top')    py1 = -1;
+    if (toPt.side === 'right')    px2 =  1;
+    if (toPt.side === 'left')     px2 = -1;
+    if (toPt.side === 'bottom')   py2 =  1;
+    if (toPt.side === 'top')      py2 = -1;
 
-    if (toPt.side === 'right')  { cx2 = x2 + cpLen; cy2 = y2; }
-    if (toPt.side === 'left')   { cx2 = x2 - cpLen; cy2 = y2; }
-    if (toPt.side === 'bottom') { cx2 = x2; cy2 = y2 + cpLen; }
-    if (toPt.side === 'top')    { cx2 = x2; cy2 = y2 - cpLen; }
+    // 30 % perpendicular for smooth exit, 70 % toward target for direct path
+    const cx1 = x1 + cpDist * (px1 * 0.3 + ndx * 0.7);
+    const cy1 = y1 + cpDist * (py1 * 0.3 + ndy * 0.7);
+    const cx2 = x2 + cpDist * (px2 * 0.3 - ndx * 0.7);
+    const cy2 = y2 + cpDist * (py2 * 0.3 - ndy * 0.7);
 
     const d = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
 
