@@ -1177,38 +1177,35 @@ function buildNodeCard(node, opts = {}) {
   return el;
 }
 
-/* ── Ray-box intersection: find where a line from the node centre to a
-      target point exits the node rectangle. Returns {x, y, side}. ── */
+/* ── Edge connection point: determine which side to exit and snap to the
+      midpoint of that side (XMind-style flush attachment).
+      Endpoints extend 3px PAST the card border into the card interior.
+      Since the SVG layer is behind cards (z-index 1 vs 2), these pixels
+      are hidden, but they guarantee the line visually touches the border
+      at every zoom level — no sub-pixel gap possible. ── */
 function edgePoint(nx, ny, nw, nh, tx, ty) {
   const cx = nx + nw / 2, cy = ny + nh / 2;
   const dx = tx - cx,     dy = ty - cy;
-  if (dx === 0 && dy === 0) return { x: cx + nw / 2, y: cy, side: 'right' };
+  if (dx === 0 && dy === 0) return { x: nx + nw - 3, y: cy, side: 'right' };
 
+  // Determine exit side via aspect-ratio–weighted comparison
   const halfW = nw / 2, halfH = nh / 2;
   const absDx = Math.abs(dx), absDy = Math.abs(dy);
-  let x, y, side;
-
+  let side;
   if (absDx * halfH >= absDy * halfW) {
-    // exits left or right
-    const sign = dx > 0 ? 1 : -1;
-    x = cx + sign * halfW;
-    y = cy + dy * halfW / absDx;
     side = dx > 0 ? 'right' : 'left';
   } else {
-    // exits top or bottom
-    const sign = dy > 0 ? 1 : -1;
-    x = cx + dx * halfH / absDy;
-    y = cy + sign * halfH;
     side = dy > 0 ? 'bottom' : 'top';
   }
 
-  // Keep point away from extreme corners (min 8 px margin)
-  if (side === 'left' || side === 'right') {
-    y = Math.max(ny + 8, Math.min(ny + nh - 8, y));
-  } else {
-    x = Math.max(nx + 8, Math.min(nx + nw - 8, x));
+  // Snap to midpoint of the chosen side, then extend 3px inward past border
+  const inset = 3;
+  switch (side) {
+    case 'right':  return { x: nx + nw - inset, y: cy, side };
+    case 'left':   return { x: nx + inset,      y: cy, side };
+    case 'bottom': return { x: cx, y: ny + nh - inset, side };
+    case 'top':    return { x: cx, y: ny + inset,      side };
   }
-  return { x, y, side };
 }
 
 function renderConnections(svg) {
@@ -1219,12 +1216,18 @@ function renderConnections(svg) {
     const toNode   = state.nodes.get(conn.to);
     if (!fromNode || !toNode) continue;
 
-    const fp = fromNode.positions.topic;
-    const tp = toNode.positions.topic;
-
-    // Use actual DOM dimensions when available
+    // Use actual DOM element positions and dimensions for pixel-perfect alignment.
+    // Stored positions (positions.topic) can diverge from CSS left/top after
+    // drag, auto-arrange, or view transitions — reading the live DOM values
+    // guarantees line endpoints match the on-screen card positions.
     const fEl = $(`.node-card[data-node-id="${conn.from}"]`);
     const tEl = $(`.node-card[data-node-id="${conn.to}"]`);
+    const fp = fEl
+      ? { x: parseFloat(fEl.style.left) || 0, y: parseFloat(fEl.style.top) || 0 }
+      : fromNode.positions.topic;
+    const tp = tEl
+      ? { x: parseFloat(tEl.style.left) || 0, y: parseFloat(tEl.style.top) || 0 }
+      : toNode.positions.topic;
     const fw = fEl ? fEl.offsetWidth  : (fromNode.isMain ? 280 : 240);
     const tw = tEl ? tEl.offsetWidth  : (toNode.isMain   ? 280 : 240);
     const fh = fEl ? fEl.offsetHeight : 120;
@@ -1234,21 +1237,17 @@ function renderConnections(svg) {
     const fcx = fp.x + fw / 2, fcy = fp.y + fh / 2;
     const tcx = tp.x + tw / 2, tcy = tp.y + th / 2;
 
-    // Precise edge exit / entry via ray-box intersection
+    // Edge midpoint with 3px inset past border (hidden behind card via z-index)
     const fromPt = edgePoint(fp.x, fp.y, fw, fh, tcx, tcy);
     const toPt   = edgePoint(tp.x, tp.y, tw, th, fcx, fcy);
 
-    let x1 = fromPt.x, y1 = fromPt.y;
-    let x2 = toPt.x,   y2 = toPt.y;
+    const x1 = fromPt.x, y1 = fromPt.y;
+    const x2 = toPt.x,   y2 = toPt.y;
 
-    // Pull target point 2 px outward so SVG arrowhead stays above node card
-    const arrowPad = 2;
-    if (toPt.side === 'right')  x2 += arrowPad;
-    if (toPt.side === 'left')   x2 -= arrowPad;
-    if (toPt.side === 'bottom') y2 += arrowPad;
-    if (toPt.side === 'top')    y2 -= arrowPad;
-
-    // Straight line from edge to edge — clean, direct, no curves crossing other cards
+    // Straight line from side midpoint to side midpoint — flush against card borders.
+    // No arrowPad: SVG is behind cards (z-index 1 vs 2), so endpoints at the card
+    // border are partially covered; the arrowhead marker (refX=7 on 8px wide tip)
+    // naturally straddles the border with its tip 1px inside (hidden) and body outside.
     const d = `M${x1},${y1} L${x2},${y2}`;
 
     // Determine if this connection should be highlighted
