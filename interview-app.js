@@ -30,6 +30,7 @@ const state = {
   zoomLevel: 1,
   ghostNodes: [],       // AI-suggested placeholder nodes
   dismissedSuggestions: new Set(), // IDs of skipped suggestions (persisted per project)
+  lastAiReview: null,   // Cached AI review result (preserved across adopt/dismiss)
 };
 
 // ── Project Management ──
@@ -83,7 +84,7 @@ function loadProjectState() {
 function createProject(name) {
   const list = getProjectList();
   const id = 'p' + Date.now();
-  list.push({ id, name, createdAt: Date.now() });
+  list.push({ id, name, createdAt: Date.now(), updatedAt: Date.now(), nodeCount: 0 });
   saveProjectList(list);
   switchProject(id);
   renderProjectSelect();
@@ -129,6 +130,14 @@ function saveState() {
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   saveToFile(data);
+  // Update project metadata (updatedAt, nodeCount)
+  const list = getProjectList();
+  const proj = list.find(p => p.id === currentProjectId);
+  if (proj) {
+    proj.updatedAt = Date.now();
+    proj.nodeCount = state.nodes.size;
+    saveProjectList(list);
+  }
 }
 
 function saveToFile(data) {
@@ -206,15 +215,295 @@ function updateNode(id, updates) {
 
 // ── Render ──
 
+function renderHealthBar() {
+  const nodes = [...state.nodes.values()];
+  if (nodes.length < 2) {
+    const existing = document.getElementById('canvas-health');
+    if (existing) existing.remove();
+    return;
+  }
+
+  let healthEl = document.getElementById('canvas-health');
+  if (!healthEl) {
+    healthEl = document.createElement('div');
+    healthEl.id = 'canvas-health';
+    healthEl.className = 'canvas-health-bar';
+    const area = document.getElementById('canvas-area');
+    area.insertBefore(healthEl, area.firstChild);
+  }
+
+  const jobCounts = { '吸引': 0, '培育': 0, '轉換': 0, '': 0 };
+  const stageCounts = { A: 0, B: 0, C: 0, D: 0 };
+  const materialCounts = { long: 0, short: 0 };
+  let hasMain = false;
+
+  for (const n of nodes) {
+    jobCounts[n.main.job || ''] = (jobCounts[n.main.job || ''] || 0) + 1;
+    const stage = n.positions?.journey?.stage || 'A';
+    stageCounts[stage] = (stageCounts[stage] || 0) + 1;
+    const mat = n.positions?.material?.column || 'long';
+    materialCounts[mat] = (materialCounts[mat] || 0) + 1;
+    if (n.isMain) hasMain = true;
+  }
+
+  const alerts = [];
+  const total = nodes.length;
+
+  if (jobCounts['吸引'] === 0) alerts.push({ type: 'warn', msg: '缺少「吸引」類訪談 — 新觀眾沒有入口' });
+  if (jobCounts['轉換'] === 0 && total >= 3) alerts.push({ type: 'warn', msg: '缺少「轉換」類訪談 — 沒有推動行動的內容' });
+  if (jobCounts[''] > 0) alerts.push({ type: 'info', msg: `${jobCounts['']} 集訪談尚未指定目的` });
+
+  const emptyStages = Object.entries(stageCounts).filter(([k, v]) => v === 0).map(([k]) => k);
+  if (emptyStages.length > 0 && total >= 3) {
+    const labels = emptyStages.map(s => JOURNEY_LABELS[s]).join('、');
+    alerts.push({ type: 'warn', msg: `內容階段缺口：${labels} 沒有訪談覆蓋` });
+  }
+
+  if (materialCounts.short === 0 && total >= 3) {
+    alerts.push({ type: 'info', msg: '全部都是長片 — 考慮剪幾支精華短片當入口' });
+  }
+
+  if (!hasMain && total >= 2) {
+    alerts.push({ type: 'info', msg: '尚未設定主節點 — 標記你這個系列最重要的訪談' });
+  }
+
+  // ── Strategy-level insights ──
+
+  // 1. Funnel ratio check: ideal is ~30% attract, 40% nurture, 30% convert
+  if (total >= 4) {
+    const attractPct = (jobCounts['吸引'] / total) * 100;
+    const nurturePct = (jobCounts['培育'] / total) * 100;
+    const convertPct = (jobCounts['轉換'] / total) * 100;
+
+    if (attractPct > 60) alerts.push({ type: 'info', msg: '「吸引」佔比偏高 — 觀眾進來了但沒有內容留住他們，考慮加「培育」' });
+    if (convertPct > 50 && attractPct < 20) alerts.push({ type: 'warn', msg: '轉換多但吸引少 — 漏斗頂部太窄，新觀眾進不來' });
+    if (nurturePct > 60) alerts.push({ type: 'info', msg: '「培育」比例很高 — 很棒的深度內容，但記得加幾支吸引型訪談吸引新觀眾' });
+  }
+
+  // 2. Main node check: series should have a clear anchor
+  const mainNodes = nodes.filter(n => n.isMain);
+  if (mainNodes.length > 1) {
+    alerts.push({ type: 'info', msg: `有 ${mainNodes.length} 個主節點 — 通常一個系列只需要一個核心訪談` });
+  }
+
+  // 3. CTA diversity check
+  const ctaNodes = nodes.filter(n => n.main.cta);
+  if (ctaNodes.length === 0 && total >= 3) {
+    alerts.push({ type: 'warn', msg: '沒有任何訪談設定 CTA — 觀眾看完不知道要做什麼' });
+  } else if (ctaNodes.length > 0) {
+    const ctas = ctaNodes.map(n => n.main.cta.trim().toLowerCase());
+    const uniqueCtas = new Set(ctas);
+    if (uniqueCtas.size === 1 && ctas.length >= 3) {
+      alerts.push({ type: 'info', msg: '所有 CTA 都一樣 — 不同階段的觀眾需要不同的行動指引' });
+    }
+  }
+
+  // 4. Connection check: orphan nodes
+  if (total >= 3) {
+    const connectedIds = new Set();
+    for (const c of state.connections) {
+      connectedIds.add(c.from);
+      connectedIds.add(c.to);
+    }
+    const orphanCount = nodes.filter(n => !connectedIds.has(n.id)).length;
+    if (orphanCount > 0 && state.connections.length > 0) {
+      alerts.push({ type: 'info', msg: `${orphanCount} 集訪談沒有連線 — 孤立內容不利於觀眾流動` });
+    } else if (state.connections.length === 0 && total >= 3) {
+      alerts.push({ type: 'info', msg: '還沒建立任何連線 — 用 🔗 把相關訪談串起來引導觀眾' });
+    }
+  }
+
+  // 5. Short-form gateway check
+  if (total >= 4) {
+    const shortAttract = nodes.filter(n => (n.positions?.material?.column === 'short') && n.main.job === '吸引');
+    const longAttract = nodes.filter(n => (n.positions?.material?.column !== 'short') && n.main.job === '吸引');
+    if (longAttract.length > 0 && shortAttract.length === 0) {
+      alerts.push({ type: 'info', msg: '「吸引」類都是長片 — 精華短片更容易讓新觀眾點進來' });
+    }
+  }
+
+  // Show max 3 most important alerts to avoid overwhelming
+  const sortedAlerts = alerts.sort((a, b) => (a.type === 'warn' ? 0 : 1) - (b.type === 'warn' ? 0 : 1));
+  const displayAlerts = sortedAlerts.slice(0, 3);
+  const hiddenCount = alerts.length - displayAlerts.length;
+
+  const jobPills = ['吸引', '培育', '轉換'].map(j => {
+    const count = jobCounts[j] || 0;
+    const cls = j === '吸引' ? 'attract' : j === '培育' ? 'nurture' : 'convert';
+    return `<span class="health-pill health-${cls}">${j} ${count}</span>`;
+  }).join('');
+
+  const stagePills = Object.entries(JOURNEY_LABELS).map(([k, label]) => {
+    const count = stageCounts[k] || 0;
+    return `<span class="health-pill ${count === 0 ? 'health-empty' : 'health-ok'}">${label.split(' ')[0]}${label.split(' ')[1] || ''} ${count}</span>`;
+  }).join('');
+
+  const alertsHtml = displayAlerts.length > 0
+    ? `<div class="health-alerts">${displayAlerts.map(a => `<span class="health-alert health-alert-${a.type}">${a.type === 'warn' ? '⚠️' : '💡'} ${a.msg}</span>`).join('')}${hiddenCount > 0 ? `<span class="health-alert health-alert-more">還有 ${hiddenCount} 項建議…</span>` : ''}</div>`
+    : `<div class="health-alerts"><span class="health-alert health-alert-good">✅ 內容策略看起來不錯！</span></div>`;
+
+  healthEl.innerHTML = `
+    <div class="health-row">
+      <div class="health-group"><span class="health-label">目的</span>${jobPills}</div>
+      <div class="health-group"><span class="health-label">階段</span>${stagePills}</div>
+    </div>
+    ${alertsHtml}
+  `;
+}
+
+function updateSmartHint() {
+  const addBtn = document.getElementById('btn-add');
+  if (!addBtn) return;
+  const nodes = [...state.nodes.values()];
+  if (nodes.length < 2) {
+    addBtn.textContent = '＋ 新增節點';
+    addBtn.title = '新增節點 (或雙擊畫布)';
+    return;
+  }
+
+  const jobCounts = { '吸引': 0, '培育': 0, '轉換': 0 };
+  const stageCounts = { A: 0, B: 0, C: 0, D: 0 };
+  for (const n of nodes) {
+    if (n.main.job && jobCounts[n.main.job] !== undefined) jobCounts[n.main.job]++;
+    const stage = n.positions?.journey?.stage || 'A';
+    stageCounts[stage]++;
+  }
+
+  let hint = '';
+  if (jobCounts['吸引'] === 0) {
+    hint = '💡 建議加一集「吸引」訪談讓新觀眾認識你';
+  } else if (jobCounts['轉換'] === 0) {
+    hint = '💡 建議加一集「轉換」訪談推動觀眾行動';
+  } else if (jobCounts['培育'] === 0) {
+    hint = '💡 建議加一集「培育」訪談加深觀眾信任';
+  } else {
+    const emptyStages = Object.entries(stageCounts).filter(([k, v]) => v === 0);
+    if (emptyStages.length > 0) {
+      const label = JOURNEY_LABELS[emptyStages[0][0]];
+      hint = `💡 「${label}」階段還沒有訪談`;
+    }
+  }
+
+  if (hint) {
+    addBtn.innerHTML = `＋ 新增節點 <span class="smart-hint">${hint}</span>`;
+    addBtn.title = hint;
+  } else {
+    addBtn.textContent = '＋ 新增節點';
+    addBtn.title = '新增節點 (或雙擊畫布)';
+  }
+}
+
+function calcCompleteness() {
+  const nodes = [...state.nodes.values()];
+  if (nodes.length === 0) return 0;
+
+  let score = 0;
+  const total = 100;
+
+  // 1. Has at least 3 nodes (20 pts)
+  if (nodes.length >= 3) score += 20;
+  else if (nodes.length >= 1) score += nodes.length * 7;
+
+  // 2. All nodes have Job assigned (20 pts)
+  const withJob = nodes.filter(n => n.main.job).length;
+  score += Math.round((withJob / nodes.length) * 20);
+
+  // 3. At least 2 different Jobs covered (15 pts)
+  const uniqueJobs = new Set(nodes.filter(n => n.main.job).map(n => n.main.job));
+  if (uniqueJobs.size >= 3) score += 15;
+  else if (uniqueJobs.size >= 2) score += 10;
+  else if (uniqueJobs.size >= 1) score += 5;
+
+  // 4. At least 2 stages covered (15 pts)
+  const uniqueStages = new Set(nodes.map(n => n.positions?.journey?.stage || 'A'));
+  if (uniqueStages.size >= 4) score += 15;
+  else if (uniqueStages.size >= 3) score += 10;
+  else if (uniqueStages.size >= 2) score += 7;
+
+  // 5. Has connections (10 pts)
+  if (state.connections.length >= 2) score += 10;
+  else if (state.connections.length >= 1) score += 5;
+
+  // 6. Has at least one CTA (10 pts)
+  if (nodes.some(n => n.main.cta)) score += 10;
+
+  // 7. Has a main node (10 pts)
+  if (nodes.some(n => n.isMain)) score += 10;
+
+  return Math.min(score, 100);
+}
+
+// Per-node readiness score (0-100) — how ready is this node to film?
+function nodeReadiness(node) {
+  let score = 0;
+  if (node.main.topic) score += 15;
+  if (node.main.job) score += 15;
+  if (node.main.cta) score += 15;
+  if (node.positions?.journey?.stage) score += 10;
+  if (node.positions?.material?.column) score += 5;
+  if (node.user && node.user.length > 20) score += 15;
+  if (node.aiResearch) score += 15;
+  if (node.filmingAngles?.length > 0) score += 10;
+  return Math.min(score, 100);
+}
+
 function render() {
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === state.currentView));
-  $('#node-count').textContent = `${state.nodes.size} 個節點`;
+  const completenessScore = calcCompleteness();
+  $('#node-count').innerHTML = `${state.nodes.size} 個節點 ${completenessScore > 0 ? `<span class="completeness-badge" title="企劃完成度">${completenessScore}%</span>` : ''}`;
+  // Color the completeness badge based on score
+  const badge = document.querySelector('.completeness-badge');
+  if (badge) {
+    if (completenessScore >= 80) { badge.style.background = '#f0fdf4'; badge.style.color = '#166534'; }
+    else if (completenessScore >= 50) { badge.style.background = '#fffbeb'; badge.style.color = '#92400e'; }
+    else { badge.style.background = '#f1f5f9'; badge.style.color = '#64748b'; }
+  }
   $('#btn-connect').classList.toggle('active-mode', state.connectMode);
+
+  // Connect mode hint banner
+  let connectHint = document.getElementById('connect-hint');
+  if (state.connectMode) {
+    if (!connectHint) {
+      connectHint = document.createElement('div');
+      connectHint.id = 'connect-hint';
+      connectHint.className = 'connect-hint-banner';
+      connectHint.innerHTML = '🔗 連線模式：點擊第一個節點，再點擊第二個節點即可建立連線。按 Esc 取消。';
+      document.getElementById('canvas-area').prepend(connectHint);
+    }
+  } else {
+    if (connectHint) connectHint.remove();
+  }
 
   const canvas = $('#canvas');
   const svg = $('#connections-svg');
   const area = $('#canvas-area');
+
+  // ── Canvas Health Bar ──
+  renderHealthBar();
+
   canvas.innerHTML = '';
+
+  // Empty canvas welcome
+  let emptyState = document.getElementById('canvas-empty-welcome');
+  if (state.nodes.size === 0) {
+    if (!emptyState) {
+      emptyState = document.createElement('div');
+      emptyState.id = 'canvas-empty-welcome';
+      emptyState.className = 'canvas-empty-state';
+      emptyState.innerHTML = `
+        <div class="empty-icon">🎤</div>
+        <h3>開始規劃你的訪談內容策略</h3>
+        <p>每集訪談建立一個節點，從來賓選擇到完整企劃一步步完成</p>
+        <button class="empty-start-btn" id="empty-start-btn">＋ 建立第一個節點</button>
+      `;
+      area.appendChild(emptyState);
+      document.getElementById('empty-start-btn').addEventListener('click', () => {
+        showModal(area.offsetWidth / 2 - 120, 100);
+      });
+    }
+  } else if (emptyState) {
+    emptyState.remove();
+  }
 
   // Show/hide topic sub-toolbar
   const toolbar = $('#topic-toolbar');
@@ -269,14 +558,20 @@ function render() {
   }
 
   renderPanel();
+  updateSmartHint();
 }
 
 function renderTopicView(container) {
+  let idx = 0;
   for (const node of state.nodes.values()) {
     const el = buildNodeCard(node);
+    if (!node.positions.topic) {
+      node.positions.topic = { x: 60 + (idx % 4) * 280, y: 60 + Math.floor(idx / 4) * 220 };
+    }
     const pos = node.positions.topic;
     el.style.left = pos.x + 'px';
     el.style.top = pos.y + 'px';
+    idx++;
 
     // Hover → highlight only this node's connections
     el.addEventListener('mouseenter', () => {
@@ -435,6 +730,14 @@ function renderColumnView(container, labels, viewKey, posKey) {
 }
 
 function renderMaterialView(container) {
+  // Contextual tip for material view
+  if (state.nodes.size > 0 && state.nodes.size <= 12) {
+    const tip = document.createElement('div');
+    tip.className = 'view-tip';
+    tip.innerHTML = '<strong>💡 素材準備</strong>：完整訪談做長片，精華片段剪成短片。建議每集長訪談搭配 2-3 支精華短片。';
+    container.appendChild(tip);
+  }
+
   const wrapper = document.createElement('div');
   wrapper.className = 'material-view';
 
@@ -520,6 +823,13 @@ function renderMaterialView(container) {
     });
     col.appendChild(addBtn);
 
+    if (col.querySelectorAll('.node-card').length === 0) {
+      const emptyHint = document.createElement('div');
+      emptyHint.className = 'column-empty-hint';
+      emptyHint.textContent = '拖曳節點到此分類';
+      col.appendChild(emptyHint);
+    }
+
     wrapper.appendChild(col);
   }
 
@@ -574,6 +884,14 @@ const GAP_HINTS = {
 };
 
 function renderJourneyView(container) {
+  // Contextual tip for journey view
+  if (state.nodes.size > 0 && state.nodes.size <= 12) {
+    const tip = document.createElement('div');
+    tip.className = 'view-tip';
+    tip.innerHTML = '<strong>💡 內容目的</strong>：確保每個階段都有訪談。從「拉新」→「深度」→「信任」→「社群」，缺任何一環觀眾都留不住。';
+    container.appendChild(tip);
+  }
+
   const wrapper = document.createElement('div');
   wrapper.className = 'column-view';
   const totalNodes = state.nodes.size || 1;
@@ -675,6 +993,7 @@ function buildNodeCard(node, opts = {}) {
   el.dataset.nodeId = node.id;
 
   const jobClass = { '吸引': 'job-attract', '培育': 'job-nurture', '轉換': 'job-convert' }[node.main.job] || '';
+  const connCount = state.connections.filter(c => c.from === node.id || c.to === node.id).length;
 
   if (compact) {
     el.setAttribute('draggable', 'true');
@@ -701,20 +1020,28 @@ function buildNodeCard(node, opts = {}) {
     return el;
   }
 
+  const readiness = nodeReadiness(node);
+  const readyClass = readiness >= 80 ? 'ready-green' : readiness >= 50 ? 'ready-yellow' : 'ready-red';
+
   el.innerHTML = `
     <div class="node-main">
-      ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
+      <div class="node-top-row">
+        ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
+        <span class="readiness-dot ${readyClass}" title="準備度 ${readiness}%"></span>
+      </div>
       <div class="node-topic">${esc(node.main.topic)}</div>
       ${node.guest ? `<div class="node-guest">🎤 ${esc(node.guest)}</div>` : ''}
       <div class="node-meta">
-        ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span><span class="job-desc">${JOB_DESC[node.main.job] || ''}</span>` : ''}
+        ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span><span class="job-desc">${JOB_DESC[node.main.job] || ''}</span>` : '<span class="job-badge job-unset">未指定</span>'}
+        ${node.positions.journey?.stage ? `<span class="stage-badge stage-${node.positions.journey.stage}">${esc(JOURNEY_LABELS[node.positions.journey.stage])}</span>` : ''}
+        ${connCount > 0 ? `<span class="conn-count-badge">🔗 ${connCount}</span>` : ''}
         ${node.main.cta ? `<span class="cta-text">CTA: ${esc(node.main.cta)}</span>` : ''}
       </div>
     </div>
-    <div class="node-user">
-      <div class="node-user-label">USER</div>
-      <div class="node-user-text ${node.user ? '' : 'empty'}" contenteditable="true" data-node-id="${node.id}">${node.user ? esc(node.user) : ''}</div>
-    </div>
+    ${node.user ? `<div class="node-user">
+      <div class="node-user-label">筆記</div>
+      <div class="node-user-text" contenteditable="true" data-node-id="${node.id}">${esc(node.user)}</div>
+    </div>` : ''}
     ${node.aiSuggest.length > 0 ? `
     <div class="node-ai">
       <div class="node-ai-label">AI SUGGEST</div>
@@ -752,7 +1079,6 @@ function buildNodeCard(node, opts = {}) {
 
   const userEl = el.querySelector('.node-user-text');
   if (userEl) {
-    userEl.setAttribute('placeholder', '備註...');
     userEl.addEventListener('focus', (e) => e.stopPropagation());
     userEl.addEventListener('pointerdown', (e) => e.stopPropagation());
     userEl.addEventListener('blur', () => {
@@ -775,6 +1101,16 @@ function buildNodeCard(node, opts = {}) {
     } else {
       selectNode(node.id);
     }
+  });
+
+  // Hover-to-highlight connections
+  el.addEventListener('mouseenter', () => {
+    state.hoveredNodeId = node.id;
+    highlightConnections(node.id);
+  });
+  el.addEventListener('mouseleave', () => {
+    state.hoveredNodeId = null;
+    highlightConnections(state.selectedNodeId);
   });
 
   return el;
@@ -928,7 +1264,7 @@ function renderPanel() {
           <select id="edit-interview-type">${typeOptions}</select>
         </div>
         <div class="detail-half">
-          <label>Job</label>
+          <label>影片目的</label>
           <select id="edit-job">${jobOptions}</select>
         </div>
       </div>
@@ -962,7 +1298,7 @@ function renderPanel() {
       <div class="detail-section">
         <label>💬 我知道的（隨手寫）</label>
         <textarea id="edit-user" rows="3" placeholder="來賓背景、故事線索、你想聊的方向...">${esc(node.user)}</textarea>
-        <button class="expand-btn" id="btn-expand">🔍 展開內容</button>
+        <button class="expand-btn" id="btn-expand" title="根據你的筆記，用 AI 自動擴寫成影片企劃">✨ AI 擴寫企劃</button>
       </div>
 
       ${research ? `
@@ -1034,8 +1370,11 @@ function renderPanel() {
         <div id="ask-node-result"></div>
       </div>
       <div class="detail-actions">
-        <button class="delete-btn" id="btn-delete-node">刪除</button>
-        <button class="save-btn" id="btn-save-node">儲存</button>
+        <button class="save-btn" id="btn-save-node">儲存變更</button>
+      </div>
+      <div class="detail-danger-zone">
+        <button class="duplicate-btn" id="btn-duplicate-node">📋 複製節點</button>
+        <button class="delete-btn" id="btn-delete-node">🗑 刪除此節點</button>
       </div>
     `;
 
@@ -1058,11 +1397,72 @@ function renderPanel() {
       render();
     });
 
+    // Auto-save on change for all fields
+    function autoSaveNode() {
+      const updates = {
+        main: {
+          topic: $('#edit-topic').value,
+          job: $('#edit-job').value,
+          cta: $('#edit-cta').value,
+        },
+        guest: $('#edit-guest').value,
+        interviewType: $('#edit-interview-type').value,
+        user: $('#edit-user').value,
+        isMain: $('#edit-main').checked,
+        positions: {
+          journey: { stage: $('#edit-stage').value },
+          material: { column: $('#edit-material').value },
+        },
+      };
+      updateNode(node.id, updates);
+      const saveBtn = $('#btn-save-node');
+      if (saveBtn) {
+        saveBtn.textContent = '已儲存 ✓';
+        saveBtn.classList.add('saved-flash');
+        setTimeout(() => {
+          saveBtn.textContent = '儲存變更';
+          saveBtn.classList.remove('saved-flash');
+        }, 1500);
+      }
+    }
+
+    ['#edit-topic', '#edit-guest', '#edit-cta', '#edit-user'].forEach(sel => {
+      const el = $(sel);
+      if (el) el.addEventListener('blur', autoSaveNode);
+    });
+    ['#edit-job', '#edit-stage', '#edit-material', '#edit-main', '#edit-interview-type'].forEach(sel => {
+      const el = $(sel);
+      if (el) el.addEventListener('change', autoSaveNode);
+    });
+
     $('#btn-delete-node').addEventListener('click', () => {
       if (confirm('刪除此節點？')) {
         deleteNode(node.id);
         render();
       }
+    });
+
+    $('#btn-duplicate-node').addEventListener('click', () => {
+      const newNode = createNode({
+        topic: node.main.topic + ' (副本)',
+        job: node.main.job,
+        cta: node.main.cta,
+        isMain: false,
+      }, (node.positions.topic?.x || 100) + 30, (node.positions.topic?.y || 100) + 30);
+      newNode.user = node.user;
+      newNode.guest = node.guest || '';
+      newNode.interviewType = node.interviewType || '';
+      if (node.positions.journey?.stage) {
+        newNode.positions.journey = { stage: node.positions.journey.stage };
+      }
+      if (node.positions.material?.column) {
+        newNode.positions.material = { column: node.positions.material.column };
+      }
+      if (node.aiResearch) newNode.aiResearch = JSON.parse(JSON.stringify(node.aiResearch));
+      if (node.filmingAngles?.length) newNode.filmingAngles = JSON.parse(JSON.stringify(node.filmingAngles));
+      saveState();
+      selectNode(newNode.id);
+      render();
     });
 
     const connList = $('#conn-list');
@@ -1115,6 +1515,17 @@ function renderPanel() {
       const btn = $('#btn-expand');
       const userText = $('#edit-user').value;
       const topic = $('#edit-topic').value;
+
+      // Save all current form fields BEFORE the async call
+      // so renderPanel() won't wipe unsaved textarea content
+      node.user = userText;
+      node.main.topic = topic;
+      node.main.job = $('#edit-job').value;
+      node.main.cta = $('#edit-cta').value;
+      node.guest = $('#edit-guest')?.value || node.guest;
+      node.interviewType = $('#edit-interview-type')?.value || node.interviewType;
+      saveState();
+
       btn.textContent = '🔄 查詢中...';
       btn.disabled = true;
 
@@ -1647,17 +2058,28 @@ function analyzeCanvas() {
   const suggestions = [];
   const totalNodes = nodes.length;
 
-  // Extract themes/products from TITLES only (not user notes, to avoid false matches)
+  // ── Dynamic keyword extraction from actual canvas content ──
   const existingTopics = nodes.map(n => n.main.topic);
   const titleText = nodes.map(n => n.main.topic).join(' ');
-  const productKeywords = [];
-  const themeKeywords = ['背包', '安全帽', '手套', '護具', '防水包'];
-  const brandKeywords = ['Alpaka', 'Boblbee', 'Stream Trail'];
-  for (const kw of [...brandKeywords, ...themeKeywords]) {
-    if (titleText.includes(kw) && !productKeywords.includes(kw)) productKeywords.push(kw);
+
+  // Extract meaningful words (2+ chars) from all titles
+  const wordFreq = {};
+  for (const title of existingTopics) {
+    const words = title.split(/[\s：、—\-（）()\|｜]+|\bvs\b/i).filter(w => w.length >= 2);
+    const unique = [...new Set(words)];
+    for (const w of unique) {
+      if (/^(新手|入門|指南|完整|如何|怎麼|什麼|一個|精華|剪輯|比較|評測|開箱|心得|使用|回饋|專訪|訪談|快問快答)$/.test(w)) continue;
+      wordFreq[w] = (wordFreq[w] || 0) + 1;
+    }
   }
-  const brandNames = productKeywords.filter(k => brandKeywords.includes(k));
-  const themeWord = productKeywords.find(k => themeKeywords.includes(k)) || '裝備';
+
+  const commonWords = Object.entries(wordFreq)
+    .filter(([, c]) => c >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([w]) => w);
+
+  const themeWord = commonWords[0] || existingTopics[0]?.substring(0, 6) || '主題';
+  const brandNames = commonWords.filter(w => w.length >= 2).slice(0, 3);
 
   // ── Layer 0: Incomplete nodes (auto-complete) ──
   for (const node of nodes) {
@@ -1713,8 +2135,8 @@ function analyzeCanvas() {
 
   for (const promo of promoNodes) {
     // Find which brand/product this promotion is about
-    const promoBrands = brandKeywords.filter(k => promo.main.topic.includes(k) || (promo.user || '').includes(k));
-    const promoTheme = themeKeywords.find(k => promo.main.topic.includes(k) || (promo.user || '').includes(k));
+    const promoBrands = brandNames.filter(k => promo.main.topic.includes(k) || (promo.user || '').includes(k));
+    const promoTheme = commonWords.find(k => promo.main.topic.includes(k) || (promo.user || '').includes(k));
 
     // Find related nodes that should mention this promotion
     for (const node of nodes) {
@@ -1765,8 +2187,8 @@ function analyzeCanvas() {
       if (nodeIsFramework && mainIsSpecific) {
         // This node looks broader than the current main
         // Check if the main node's product is a subset of this node's framework
-        const mainBrands = brandKeywords.filter(k => currentMain.main.topic.includes(k));
-        const nodeCoversTheme = themeKeywords.some(k => node.main.topic.includes(k));
+        const mainBrands = brandNames.filter(k => currentMain.main.topic.includes(k));
+        const nodeCoversTheme = commonWords.some(k => node.main.topic.includes(k));
 
         if (nodeCoversTheme || node.main.topic.length < currentMain.main.topic.length) {
           suggestions.push({
@@ -1805,7 +2227,7 @@ function analyzeCanvas() {
       const aWords = orphan.main.topic.split(/[\s：、—\-（）]+/).filter(w => w.length >= 2);
       const bWords = other.main.topic.split(/[\s：、—\-（）]+/).filter(w => w.length >= 2);
       const shared = aWords.filter(w => bWords.some(bw => bw.includes(w) || w.includes(bw)));
-      const sharedBrands = brandKeywords.filter(k => orphan.main.topic.includes(k) && other.main.topic.includes(k));
+      const sharedBrands = brandNames.filter(k => orphan.main.topic.includes(k) && other.main.topic.includes(k));
       const score = shared.length + sharedBrands.length * 2 + (other.isMain ? 3 : 0);
       if (score > bestScore) {
         bestScore = score;
@@ -1836,24 +2258,23 @@ function analyzeCanvas() {
     if (s && stageNodes[s]) stageNodes[s].push(n);
   }
 
+  // Interview-focused dynamic stage templates
   const stageTemplates = {
     A: [
-      { tpl: (th) => `${th}新手常犯的 5 個錯誤`, job: '吸引', material: 'short', reason: 'A 認知階段缺內容，需要入門向吸引新觀眾' },
-      { tpl: (th) => `一分鐘搞懂${th}怎麼選`, job: '吸引', material: 'short', reason: '短秒數科普片適合拉新流量' },
+      { tpl: (th) => `${th}領域最有趣的故事`, job: '吸引', material: 'short', reason: 'A 認知階段缺內容，需要有趣故事吸引新觀眾' },
+      { tpl: (th) => `快問快答：${th}入門必知`, job: '吸引', material: 'short', reason: '快問快答短片適合拉新流量' },
     ],
     B: [
-      { tpl: (th, brands) => brands.length >= 2 ? `${brands.slice(0, 2).join(' vs ')} 規格實測對決` : `${th}三大品牌橫向評比`, job: '培育', material: 'long', reason: 'B 評估階段需要比較型內容幫觀眾做選擇' },
-      { tpl: (th) => `${th}隱藏規格解讀：廠商不會告訴你的事`, job: '培育', material: 'long', reason: '深度分析建立專業形象' },
+      { tpl: (th, brands) => brands.length >= 2 ? `${brands[0]} × ${brands[1]} 深度對談` : `${th}專家深度分析`, job: '培育', material: 'long', reason: 'B 評估階段需要專業深度內容建立信任' },
+      { tpl: (th) => `${th}業界不說的秘密`, job: '培育', material: 'long', reason: '深度揭密訪談建立專業形象' },
     ],
     C: [
-      { tpl: (th, brands) => brands.length > 0 ? `${brands[0]} 30天通勤真實磨損紀錄` : `${th}一個月使用心得老實說`, job: '轉換', material: 'long', reason: 'C 信任階段需要長期使用驗證，讓觀眾相信你不是業配' },
-      { tpl: (th) => `三位車友的${th}真實使用回饋`, job: '培育', material: 'short', reason: '第三方用戶見證比自己說更有說服力' },
-      { tpl: (th) => `${th}安全認證科普：CE/EN 標準到底在驗什麼`, job: '培育', material: 'short', reason: '專業認證內容建立信任' },
+      { tpl: (th) => `${th}從業者的真實心路歷程`, job: '培育', material: 'long', reason: 'C 信任階段需要真實經驗分享建立信任' },
+      { tpl: (th) => `${th}真實使用者回饋合集`, job: '培育', material: 'short', reason: '第三方用戶見證比自己說更有說服力' },
     ],
     D: [
-      { tpl: (th) => `${th}哪裡買最划算？通路比價＋注意事項`, job: '轉換', material: 'short', reason: 'D 安心階段幫觀眾消除最後購買猶豫' },
-      { tpl: (th, brands) => brands.length > 0 ? `${brands.join('／')} 保固售後完整比較` : `${th}退換貨＆保固完整指南`, job: '轉換', material: 'short', reason: '售後保障資訊降低購買風險感' },
-      { tpl: (th) => `買了${th}之後你該知道的保養技巧`, job: '轉換', material: 'short', reason: '購後服務內容讓觀眾安心下單' },
+      { tpl: (th) => `觀眾 Q&A：${th}常見疑問一次解答`, job: '吸引', material: 'short', reason: 'D 互動階段強化社群黏著度' },
+      { tpl: (th) => `${th}社群粉絲座談會`, job: '吸引', material: 'long', reason: '粉絲互動深化社群經營' },
     ],
   };
 
@@ -1925,6 +2346,7 @@ async function runGlobalReview() {
   // Filter out previously dismissed suggestions
   const suggestions = allSuggestions.filter(s => !state.dismissedSuggestions.has(s.id));
   state.ghostNodes = suggestions;
+  state.lastAiReview = null; // Reset cached AI review
   render();
   showReviewPanel(suggestions, null);
 
@@ -1948,6 +2370,7 @@ async function runGlobalReview() {
     });
     if (res.ok) {
       const aiReview = await res.json();
+      state.lastAiReview = aiReview; // Cache for adopt/dismiss
       showReviewPanel(suggestions, aiReview);
     } else {
       const el = document.querySelector('.ai-review-loading');
@@ -2223,10 +2646,10 @@ function adoptGhost(ghostId) {
     }
   }
 
-  // Remove from ghosts and refresh
+  // Remove from ghosts and refresh (preserve AI review)
   state.ghostNodes = state.ghostNodes.filter(g => g.id !== ghostId);
   render();
-  showReviewPanel(state.ghostNodes);
+  showReviewPanel(state.ghostNodes, state.lastAiReview);
 }
 
 function dismissGhost(ghostId) {
@@ -2235,27 +2658,90 @@ function dismissGhost(ghostId) {
   saveState();
 
   state.ghostNodes = state.ghostNodes.filter(g => g.id !== ghostId);
-  const card = $(`.review-card[data-ghost-id="${ghostId}"]`);
-  if (card) card.remove();
-  // Update summary count
-  const summary = $('.review-summary');
-  if (summary) summary.textContent = `找到 ${state.ghostNodes.length} 個結構建議`;
-  if (state.ghostNodes.length === 0) {
-    const hasSkipped = state.dismissedSuggestions.size > 0;
-    $('#review-content').innerHTML = `
-      <div class="review-perfect">
-        <div class="review-perfect-icon">👍</div>
-        <div>所有建議已處理完畢</div>
-        ${hasSkipped ? `<button onclick="resetDismissedSuggestions()" style="margin-top:12px;padding:6px 16px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#64748b;cursor:pointer;font-size:13px">重新顯示已跳過的 ${state.dismissedSuggestions.size} 項建議</button>` : ''}
-      </div>`;
-  }
   render();
+  // Re-render full panel to clean up empty sections and preserve AI review
+  showReviewPanel(state.ghostNodes, state.lastAiReview);
 }
 
 function resetDismissedSuggestions() {
   state.dismissedSuggestions.clear();
   saveState();
   runGlobalReview();
+}
+
+function exportAllBriefs() {
+  const nodes = [...state.nodes.values()];
+  if (nodes.length === 0) return;
+
+  const projectName = getProjectList().find(p => p.id === currentProjectId)?.name || '未命名';
+  const longCount = nodes.filter(n => (n.positions.material?.column || 'long') === 'long').length;
+  const shortCount = nodes.filter(n => n.positions.material?.column === 'short').length;
+
+  let text = '# 訪談企劃書\n';
+  text += `專案：${projectName}\n`;
+  text += `匯出時間：${new Date().toLocaleString('zh-TW')}\n`;
+  text += `共 ${nodes.length} 集訪談（長片 ${longCount}、短片 ${shortCount}）\n\n`;
+
+  // Production order summary
+  const scored = nodes.map(n => {
+    let priority = 0;
+    if (n.isMain) priority += 50;
+    if (n.main.job === '吸引') priority += 30;
+    else if (n.main.job === '培育') priority += 15;
+    else if (n.main.job === '轉換') priority += 5;
+    if ((n.positions.material?.column || 'long') === 'long') priority += 10;
+    const conns = state.connections.filter(c => c.from === n.id || c.to === n.id).length;
+    priority += conns * 8;
+    return { node: n, priority };
+  }).sort((a, b) => b.priority - a.priority);
+
+  text += '## 建議出片順序\n';
+  scored.forEach((s, i) => {
+    const ready = nodeReadiness(s.node);
+    const readyTag = ready >= 80 ? '[可開拍]' : ready >= 50 ? '[需補充]' : '[缺資訊]';
+    const guest = s.node.guest ? ` (來賓: ${s.node.guest})` : '';
+    text += `${i + 1}. ${s.node.main.topic}${guest} ${readyTag}\n`;
+  });
+  text += '\n---\n\n';
+
+  for (const node of nodes) {
+    text += `## ${node.main.topic}\n`;
+    if (node.guest) text += `來賓：${node.guest}\n`;
+    if (node.interviewType) text += `類型：${node.interviewType}\n`;
+    text += `影片目的：${node.main.job || '未指定'}\n`;
+    text += `階段：${JOURNEY_LABELS[node.positions?.journey?.stage || 'A']}\n`;
+    text += `素材：${MATERIAL_LABELS[node.positions?.material?.column || 'long']}\n`;
+    text += `準備度：${nodeReadiness(node)}%\n`;
+    if (node.main.cta) text += `CTA：${node.main.cta}\n`;
+    if (node.isMain) text += `★ 主節點\n`;
+    if (node.user) text += `\n備註：\n${node.user}\n`;
+
+    if (node.aiResearch) {
+      const r = node.aiResearch;
+      text += '\nAI 訪談研究：\n';
+      if (r.positioning) text += `- 來賓定位：${r.positioning}\n`;
+      if (r.features) text += `- 獨家角度：${r.features}\n`;
+      if (r.competitors) text += `- 類似訪談：${r.competitors}\n`;
+      if (r.audienceCares) text += `- 觀眾想問：${r.audienceCares}\n`;
+    }
+
+    if (node.filmingAngles?.length > 0) {
+      text += '\n建議問題：\n';
+      node.filmingAngles.forEach((a, i) => {
+        text += `${i+1}. ${a.title}：${a.why}\n`;
+      });
+    }
+
+    text += '\n---\n\n';
+  }
+
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `訪談企劃_${projectName}_${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function generateBrief() {
@@ -2309,9 +2795,9 @@ function generateNodeBrief(nodeId) {
   let html = `<div class="brief-node-header">${esc(node.main.topic)}</div>`;
   html += `<div class="brief-meta">${esc(matLabel)} ｜ ${esc(stageLabel)} ｜ ${node.isMain ? '★ 主節點' : '支線'}</div>`;
 
-  // ── 01 工作 Job ──
+  // ── 01 影片目的 ──
   html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">01 工作 Job</div>
+    <div class="brief-field-label">01 影片目的</div>
     <div class="brief-field-value">${node.main.job ? esc(node.main.job + ' — ' + (JOB_DESC[node.main.job] || '')) : '⚠️ 未指定'}</div>
   </div>`;
 
@@ -2329,7 +2815,7 @@ function generateNodeBrief(nodeId) {
   if (r?.features) coreMsg += (coreMsg ? '\n\n' : '') + '獨家角度：' + r.features;
   html += `<div class="brief-field brief-field-numbered">
     <div class="brief-field-label">03 觀眾看完要記住什麼</div>
-    <div class="brief-field-value">${coreMsg ? esc(coreMsg) : '<span class="brief-empty">展開內容後自動填入</span>'}</div>
+    <div class="brief-field-value">${coreMsg ? esc(coreMsg) : '<span class="brief-empty">按「✨ AI 擴寫企劃」後自動填入</span>'}</div>
   </div>`;
 
   // ── 04 訪綱重點 Interview Outline ──
@@ -2342,7 +2828,7 @@ function generateNodeBrief(nodeId) {
   if (r?.audienceCares) nonNeg += (nonNeg ? '\n\n' : '') + '觀眾會想問：' + r.audienceCares;
   html += `<div class="brief-field brief-field-numbered">
     <div class="brief-field-label">04 訪綱重點 + 必問問題</div>
-    <div class="brief-field-value">${nonNeg ? esc(nonNeg) : '<span class="brief-empty">展開內容後自動填入</span>'}</div>
+    <div class="brief-field-value">${nonNeg ? esc(nonNeg) : '<span class="brief-empty">按「✨ AI 擴寫企劃」後自動填入</span>'}</div>
   </div>`;
 
   // ── 05 短片潛力點 Short Clip Moments ──
@@ -2399,7 +2885,7 @@ function generateNodeBrief(nodeId) {
       ${hasScript ? '🔄 重新展開腳本' : '📝 展開腳本大綱'}
     </button>`;
   } else {
-    html += `<div class="brief-hint">💡 先在節點詳情按「展開內容」取得拍攝方向，才能展開腳本</div>`;
+    html += `<div class="brief-hint">💡 先在節點詳情按「✨ AI 擴寫企劃」取得拍攝方向，才能展開腳本</div>`;
   }
 
   // ── AI 潤稿 + 複製按鈕 ──
@@ -2466,7 +2952,7 @@ function generateNodeBrief(nodeId) {
     const lines = [];
     lines.push(`# ${node.main.topic}`);
     lines.push('');
-    lines.push(`## 01 工作 Job`);
+    lines.push(`## 01 影片目的`);
     lines.push(node.main.job ? `${node.main.job} — ${JOB_DESC[node.main.job] || ''}` : '未指定');
     lines.push('');
     lines.push(`## 02 目標人物 Person`);
@@ -2531,6 +3017,31 @@ function generateGlobalBrief() {
     <div class="brief-field-value">${nodes.length} 支內容（長片 ${longCount}、短片 ${shortCount}）· ${state.connections.length} 條連線</div>
   </div>`;
 
+  // Visual funnel
+  const maxStage = Math.max(...Object.values(stageGroups).map(g => g.length), 1);
+  html += `<div class="brief-field">
+    <div class="brief-field-label">內容漏斗</div>
+    <div class="brief-funnel">
+      ${Object.entries(JOURNEY_LABELS).map(([k, label]) => {
+        const count = stageGroups[k].length;
+        const pct = Math.round((count / maxStage) * 100);
+        const barClass = count === 0 ? 'funnel-empty' : '';
+        return `<div class="funnel-row">
+          <span class="funnel-label">${label}</span>
+          <div class="funnel-bar-bg"><div class="funnel-bar funnel-${k} ${barClass}" style="width:${Math.max(pct, 8)}%">${count}</div></div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  // Publishing cadence suggestion
+  const weeksNeeded = Math.ceil(longCount / 2) || 1;
+  const totalWeeks = Math.ceil(nodes.length / 2) || 1;
+  html += `<div class="brief-field">
+    <div class="brief-field-label">建議發布節奏</div>
+    <div class="brief-field-value">以每週 2 支的頻率，${nodes.length} 支內容約需 <strong>${totalWeeks} 週</strong>完成發布。建議先集中拍攝長片（${longCount} 支），再從中剪輯短片素材。</div>
+  </div>`;
+
   // Per-stage breakdown
   for (const [key, label] of Object.entries(JOURNEY_LABELS)) {
     const group = stageGroups[key];
@@ -2554,17 +3065,47 @@ function generateGlobalBrief() {
     </div>`;
   }
 
-  // Production order suggestion
+  // Smart production order — prioritize by strategic importance
+  const scored = nodes.map(n => {
+    let priority = 0;
+    if (n.isMain) priority += 50;
+    if (n.main.job === '吸引') priority += 30;
+    else if (n.main.job === '培育') priority += 15;
+    else if (n.main.job === '轉換') priority += 5;
+    if ((n.positions.material?.column || 'long') === 'long') priority += 10;
+    const conns = state.connections.filter(c => c.from === n.id || c.to === n.id).length;
+    priority += conns * 8;
+    if (n.aiResearch) priority += 5;
+    if (n.filmingAngles?.length) priority += 5;
+    return { node: n, priority };
+  }).sort((a, b) => b.priority - a.priority);
+
   html += `<div class="brief-field">
     <div class="brief-field-label">建議出片順序</div>
-    <div class="brief-field-value brief-checklist">${nodes.filter(n => n.positions.material?.column === 'long').map((n, i) => {
-      return `${i + 1}. ${esc(n.main.topic)}`;
+    <div class="brief-field-value brief-checklist">${scored.map((s, i) => {
+      const mat = (s.node.positions.material?.column || 'long') === 'short' ? '🎬' : '📹';
+      const ready = nodeReadiness(s.node);
+      const readyIcon = ready >= 80 ? '🟢' : ready >= 50 ? '🟡' : '🔴';
+      const job = s.node.main.job ? `[${s.node.main.job}]` : '';
+      return `${i + 1}. ${mat} ${esc(s.node.main.topic)} ${job} ${readyIcon}`;
     }).join('<br>')}</div>
   </div>`;
 
-  html += `<div class="brief-hint">💡 點選單一節點後按「生成 Brief」可查看該影片的詳細製作 Brief</div>`;
+  html += `<div class="brief-hint" style="margin-top:4px;font-size:11px">🟢 可以開拍 · 🟡 還需補充 · 🔴 缺太多資訊</div>`;
+
+  html += `<div class="brief-hint">💡 點選單一節點後按「生成 Brief」可查看該訪談的詳細製作 Brief</div>`;
+
+  html += `<div class="brief-export"><button class="export-btn" id="btn-export-brief">📋 匯出全部企劃書</button></div>`;
 
   $('#brief-content').innerHTML = html;
+
+  // Bind export button if present
+  const exportBtn = document.getElementById('btn-export-brief');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+      exportAllBriefs();
+    });
+  }
 }
 
 // ── Modal ──
@@ -2586,12 +3127,57 @@ function showModal(x, y) {
     $('#input-job').value = '';
   }
 
+  const stageInput = $('#input-stage');
+  if (stageInput) {
+    stageInput.value = stageAssign || '';
+  }
+
   setTimeout(() => $('#input-topic').focus(), 50);
 }
 
 function hideModal() {
   $('#modal-overlay').classList.add('hidden');
   state.pendingPosition = null;
+}
+
+// ── View Toast ──
+
+function showViewToast(view) {
+  const nodes = [...state.nodes.values()];
+  if (nodes.length < 2) return;
+
+  let msg = '';
+  if (view === 'material') {
+    const longCount = nodes.filter(n => (n.positions?.material?.column || 'long') === 'long').length;
+    const shortCount = nodes.filter(n => n.positions?.material?.column === 'short').length;
+    msg = `長片 ${longCount} 支 · 短片 ${shortCount} 支`;
+  } else if (view === 'journey') {
+    const stages = { A: 0, B: 0, C: 0, D: 0 };
+    nodes.forEach(n => { stages[n.positions?.journey?.stage || 'A']++; });
+    const covered = Object.values(stages).filter(v => v > 0).length;
+    msg = `${covered}/4 個階段有覆蓋`;
+  } else if (view === 'topic') {
+    const connCount = state.connections.length;
+    msg = connCount > 0 ? `${connCount} 條連線` : '尚無連線';
+  }
+
+  if (!msg) return;
+
+  let toast = document.getElementById('view-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'view-toast';
+    toast.className = 'view-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.classList.remove('toast-fade');
+  void toast.offsetWidth; // force reflow
+  toast.classList.add('toast-show');
+  setTimeout(() => {
+    toast.classList.remove('toast-show');
+    toast.classList.add('toast-fade');
+  }, 2000);
 }
 
 // ── Events ──
@@ -2603,6 +3189,7 @@ function bindEvents() {
       state.selectedNodeId = null;
       saveState();
       render();
+      showViewToast(t.dataset.view);
     });
   });
 
@@ -2637,6 +3224,7 @@ function bindEvents() {
     const topic = $('#input-topic').value.trim();
     if (!topic) return;
     const pos = state.pendingPosition || { x: 100, y: 100 };
+    const stageVal = $('#input-stage') ? $('#input-stage').value : '';
     const node = createNode({
       topic,
       guest: $('#input-guest')?.value || '',
@@ -2644,6 +3232,11 @@ function bindEvents() {
       cta: $('#input-cta').value,
       isMain: $('#input-main').checked,
     }, pos.x, pos.y);
+    if (stageVal) {
+      node.positions.journey = node.positions.journey || {};
+      node.positions.journey.stage = stageVal;
+      saveState();
+    }
     if (state.pendingColumnAssign) {
       for (const [view, vals] of Object.entries(state.pendingColumnAssign)) {
         if (!node.positions[view]) node.positions[view] = {};
@@ -2706,6 +3299,10 @@ function bindEvents() {
 
   $('#btn-review').addEventListener('click', runGlobalReview);
   $('#btn-brief').addEventListener('click', generateBrief);
+  $('#btn-help')?.addEventListener('click', () => {
+    const helpEl = document.getElementById('shortcut-overlay');
+    if (helpEl) helpEl.classList.toggle('hidden');
+  });
 
   $('#review-close').addEventListener('click', () => {
     $('#panel-review').classList.add('hidden');
@@ -2726,6 +3323,11 @@ function bindEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      const helpEl = document.getElementById('shortcut-overlay');
+      if (helpEl && !helpEl.classList.contains('hidden')) {
+        helpEl.classList.add('hidden');
+        return;
+      }
       if (!$('#modal-overlay').classList.contains('hidden')) {
         hideModal();
       } else {
@@ -2734,6 +3336,11 @@ function bindEvents() {
         state.connectFrom = null;
         render();
       }
+    }
+    if (e.key === '?' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'SELECT') {
+      const helpEl = document.getElementById('shortcut-overlay');
+      if (helpEl) helpEl.classList.toggle('hidden');
+      return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedNodeId) {
       if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
@@ -2749,49 +3356,163 @@ function esc(str) {
   return d.innerHTML;
 }
 
-// ── Init ──
-async function init() {
-  // Bootstrap project system
-  let list = getProjectList();
+function formatRelativeTime(ts) {
+  if (!ts) return '尚未修改';
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '剛剛';
+  if (mins < 60) return `${mins} 分鐘前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小時前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  const months = Math.floor(days / 30);
+  return `${months} 個月前`;
+}
+
+// ── Project Picker ──
+
+function showProjectPicker() {
+  const picker = $('#project-picker');
+  if (!picker) return;
+  picker.classList.remove('hidden');
+  $('#header').style.display = 'none';
+  $('#main').style.display = 'none';
+
+  const list = getProjectList();
+  const pickerList = $('#picker-list');
+
   if (list.length === 0) {
-    // Migrate existing data into a default project
-    const id = 'p' + Date.now();
-    list = [{ id, name: '未命名專案', createdAt: Date.now() }];
-    saveProjectList(list);
-    // Move existing localStorage data to new key
-    const oldData = localStorage.getItem('interview-canvas-v1');
-    if (oldData) {
-      localStorage.setItem('interview-canvas-' + id, oldData);
-    }
-    currentProjectId = id;
-    STORAGE_KEY = 'interview-canvas-' + id;
+    pickerList.innerHTML = '<p class="picker-empty">還沒有專案，點下方按鈕建立第一個</p>';
   } else {
-    currentProjectId = list[0].id;
-    STORAGE_KEY = 'interview-canvas-' + currentProjectId;
+    const sorted = [...list].sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    pickerList.innerHTML = sorted.map(p => {
+      let count = p.nodeCount;
+      if (count == null) {
+        try {
+          const data = JSON.parse(localStorage.getItem('interview-canvas-' + p.id));
+          count = data?.nodes?.length || 0;
+        } catch { count = 0; }
+      }
+      const timeStr = formatRelativeTime(p.updatedAt || p.createdAt);
+      return `<div class="picker-item" data-project-id="${p.id}">
+        <div class="picker-item-left">
+          <span class="picker-item-name">${esc(p.name)}</span>
+          <span class="picker-item-meta">${count} 個節點 · ${timeStr}</span>
+        </div>
+        <div class="picker-item-actions">
+          <button class="picker-rename-btn" data-id="${p.id}" data-name="${esc(p.name)}" title="重新命名">✏️</button>
+          ${list.length > 1 ? `<button class="picker-delete-btn" data-id="${p.id}" title="刪除專案">🗑</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    pickerList.querySelectorAll('.picker-item').forEach(item => {
+      item.addEventListener('click', () => {
+        selectProjectFromPicker(item.dataset.projectId);
+      });
+    });
+    pickerList.querySelectorAll('.picker-rename-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const projId = btn.dataset.id;
+        const oldName = btn.dataset.name;
+        showProjectNameModal('重新命名專案', oldName, (newName) => {
+          const projList = getProjectList();
+          const proj = projList.find(p => p.id === projId);
+          if (proj) {
+            proj.name = newName;
+            saveProjectList(projList);
+            showProjectPicker(); // refresh
+          }
+        });
+      });
+    });
+    pickerList.querySelectorAll('.picker-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const projId = btn.dataset.id;
+        if (confirm('確定刪除此專案？此操作無法復原。')) {
+          deleteProject(projId);
+          showProjectPicker(); // refresh
+        }
+      });
+    });
   }
 
-  await loadState();
-  bindEvents();
-  renderProjectSelect();
+  const btn = $('#picker-new');
+  const fresh = btn.cloneNode(true);
+  btn.parentNode.replaceChild(fresh, btn);
+  fresh.addEventListener('click', () => {
+    showProjectNameModal('新增專案', '', (name) => {
+      createProject(name);
+      hideProjectPicker();
+    });
+  });
+}
 
-  // Project switcher events
+function selectProjectFromPicker(projectId) {
+  switchProject(projectId);
+  renderProjectSelect();
+  hideProjectPicker();
+}
+
+function hideProjectPicker() {
+  const picker = $('#project-picker');
+  if (picker) picker.classList.add('hidden');
+  $('#header').style.display = '';
+  $('#main').style.display = '';
+}
+
+// ── Inline project name modal (replaces blocking prompt()) ──
+function showProjectNameModal(title, defaultValue, onConfirm) {
+  document.querySelector('.project-name-modal-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'project-name-modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 16px;font-size:16px;color:#1e293b;">${esc(title)}</h3>
+      <input type="text" class="pnm-input" value="${esc(defaultValue)}" placeholder="輸入專案名稱"
+        style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;outline:none;box-sizing:border-box;">
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button class="pnm-cancel" style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#64748b;cursor:pointer;font-size:14px;">取消</button>
+        <button class="pnm-confirm" style="padding:8px 16px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">確定</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('.pnm-input');
+  input.focus();
+  input.select();
+  const close = () => overlay.remove();
+  const confirm = () => { const val = input.value.trim(); if (val) { onConfirm(val); close(); } };
+  overlay.querySelector('.pnm-cancel').addEventListener('click', close);
+  overlay.querySelector('.pnm-confirm').addEventListener('click', confirm);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') close(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+// ── Init ──
+async function init() {
+  // Always bind events first (canvas/button handlers)
+  bindEvents();
+
+  // Project switcher events (header dropdown)
   $('#project-select')?.addEventListener('change', (e) => {
     switchProject(e.target.value);
   });
 
   $('#project-select')?.addEventListener('dblclick', () => {
-    const newName = prompt('重新命名專案：', $('#project-select').selectedOptions[0]?.text);
-    if (newName && newName.trim()) {
-      renameProject(currentProjectId, newName.trim());
+    showProjectNameModal('重新命名專案', $('#project-select').selectedOptions[0]?.text || '', (name) => {
+      renameProject(currentProjectId, name);
       renderProjectSelect();
-    }
+    });
   });
 
   $('#btn-new-project')?.addEventListener('click', () => {
-    const name = prompt('新專案名稱：');
-    if (name && name.trim()) {
-      createProject(name.trim());
-    }
+    showProjectNameModal('新增專案', '', (name) => {
+      createProject(name);
+    });
   });
 
   $('#btn-delete-project')?.addEventListener('click', () => {
@@ -2802,9 +3523,28 @@ async function init() {
     }
   });
 
-  render();
-  saveState();
+  // Bootstrap project system
+  let list = getProjectList();
+  if (list.length === 0) {
+    // First time: migrate old data into a default project, go straight in
+    const id = 'p' + Date.now();
+    list = [{ id, name: '未命名專案', createdAt: Date.now(), updatedAt: Date.now(), nodeCount: 0 }];
+    saveProjectList(list);
+    const oldData = localStorage.getItem('interview-canvas-v1');
+    if (oldData) {
+      localStorage.setItem('interview-canvas-' + id, oldData);
+    }
+    currentProjectId = id;
+    STORAGE_KEY = 'interview-canvas-' + id;
+    await loadState();
+    renderProjectSelect();
+    render();
+    saveState();
+  } else {
+    // Show project picker — let user choose which project to open
+    showProjectPicker();
+  }
 }
 init();
 
-window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript };
+window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript, showProjectPicker, hideProjectPicker };
