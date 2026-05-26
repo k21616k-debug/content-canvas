@@ -64,13 +64,14 @@ issues 最多 6 個，按 severity 排序。`;
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      max_tokens: 2500,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = msg.content[0].text.trim();
     const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
-    const result = JSON.parse(clean);
+    let result;
+    try { result = JSON.parse(clean); } catch { result = { issues: [], overallScore: 5, summary: text.substring(0, 200) }; }
 
     return res.status(200).json(result);
   } catch (err) {

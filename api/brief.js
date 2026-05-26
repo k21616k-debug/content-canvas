@@ -8,7 +8,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { topic, fields } = req.body;
+    const { topic, fields: f } = req.body;
+    const fields = f || {};
 
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的製作人。
 以下是一支影片的 Brief 草稿，請潤稿成可以直接交給拍攝團隊的正式 Brief。
