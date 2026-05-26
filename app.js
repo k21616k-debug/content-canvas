@@ -1590,10 +1590,15 @@ function renderPanel() {
       const btn = $('#ask-node-btn');
       btn.disabled = true;
       btn.textContent = '⏳';
-      const result = await aiAsk(q, node.id);
-      btn.disabled = false;
-      btn.textContent = '送出';
-      if (result) renderAskResult($('#ask-node-result'), result);
+      try {
+        const result = await aiAsk(q, node.id);
+        if (result) renderAskResult($('#ask-node-result'), result);
+      } catch (err) {
+        $('#ask-node-result').innerHTML = `<div class="ask-error">⚠️ AI 回覆失敗：${err.message || '請確認網路連線或稍後再試'}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '送出';
+      }
     });
     $('#ask-node-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') $('#ask-node-btn')?.click();
@@ -2603,10 +2608,15 @@ function showReviewPanel(suggestions, aiReview) {
     const btn = $('#ask-global-btn');
     btn.disabled = true;
     btn.textContent = '⏳';
-    const result = await aiAsk(q);
-    btn.disabled = false;
-    btn.textContent = '送出';
-    if (result) renderAskResult($('#ask-global-result'), result);
+    try {
+      const result = await aiAsk(q);
+      if (result) renderAskResult($('#ask-global-result'), result);
+    } catch (err) {
+      $('#ask-global-result').innerHTML = `<div class="ask-error">⚠️ AI 回覆失敗：${err.message || '請確認網路連線或稍後再試'}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '送出';
+    }
   });
   $('#ask-global-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') $('#ask-global-btn')?.click();
