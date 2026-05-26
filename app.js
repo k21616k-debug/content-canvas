@@ -1242,19 +1242,21 @@ function renderConnections(svg) {
     const fromPt = edgePoint(fp.x, fp.y, fw, fh, tcx, tcy);
     const toPt   = edgePoint(tp.x, tp.y, tw, th, fcx, fcy);
 
-    // Place endpoints outside the card with small gaps
+    // Place endpoints flush at card edges.
+    // SVG is z-index:1 (behind cards z-index:2), so any line segment
+    // inside the card is hidden — the line visually starts at the border.
     let x1, y1, x2, y2;
     switch (fromPt.side) {
-      case 'right':  x1 = fp.x + fw + 6; y1 = fcy; break;
-      case 'left':   x1 = fp.x - 6;      y1 = fcy; break;
-      case 'bottom': x1 = fcx; y1 = fp.y + fh + 6;  break;
-      case 'top':    x1 = fcx; y1 = fp.y - 6;        break;
+      case 'right':  x1 = fp.x + fw; y1 = fcy; break;
+      case 'left':   x1 = fp.x;      y1 = fcy; break;
+      case 'bottom': x1 = fcx; y1 = fp.y + fh;  break;
+      case 'top':    x1 = fcx; y1 = fp.y;        break;
     }
     switch (toPt.side) {
-      case 'right':  x2 = tp.x + tw + 12; y2 = tcy; break;
-      case 'left':   x2 = tp.x - 12;      y2 = tcy; break;
-      case 'bottom': x2 = tcx; y2 = tp.y + th + 12;  break;
-      case 'top':    x2 = tcx; y2 = tp.y - 12;        break;
+      case 'right':  x2 = tp.x + tw; y2 = tcy; break;
+      case 'left':   x2 = tp.x;      y2 = tcy; break;
+      case 'bottom': x2 = tcx; y2 = tp.y + th;  break;
+      case 'top':    x2 = tcx; y2 = tp.y;        break;
     }
 
     // Orthogonal Z-step routing — pure right-angle lines
