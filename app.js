@@ -3428,11 +3428,18 @@ function autoArrangeNodes() {
   const nodes = [...state.nodes.values()];
   if (nodes.length === 0) return;
 
-  const cols = Math.ceil(Math.sqrt(nodes.length));
-  const gapX = 260;
-  const gapY = 160;
-  const startX = 60;
-  const startY = 60;
+  const canvasEl = document.getElementById('canvas-area');
+  const viewW = canvasEl ? canvasEl.clientWidth : 1000;
+
+  const cellW = 252;  // 240px card + 12px gap
+  const cellH = 100;  // compact row height
+  const startX = 16;
+  const startY = 16;
+
+  // Dynamic columns: fit viewport width, or sqrt — whichever gives more columns (= fewer rows = less scrolling)
+  const fitCols = Math.max(3, Math.floor((viewW - startX) / cellW));
+  const sqrtCols = Math.ceil(Math.sqrt(nodes.length));
+  const cols = Math.max(fitCols, sqrtCols);
 
   // Sort: main nodes first, then by job, then by created time
   const sorted = nodes.sort((a, b) => {
@@ -3447,8 +3454,14 @@ function autoArrangeNodes() {
   sorted.forEach((node, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
-    node.positions.topic = { x: startX + col * gapX, y: startY + row * gapY };
+    node.positions.topic = { x: startX + col * cellW, y: startY + row * cellH };
   });
+
+  // Reset scroll to origin so arranged nodes are visible
+  if (canvasEl) {
+    canvasEl.scrollLeft = 0;
+    canvasEl.scrollTop = 0;
+  }
 
   saveState();
   render();
