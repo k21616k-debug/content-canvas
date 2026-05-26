@@ -2446,7 +2446,7 @@ function showReviewPanel(suggestions, aiReview) {
   review.classList.remove('hidden');
   state.selectedNodeId = null;
 
-  if (suggestions.length === 0) {
+  if (suggestions.length === 0 && (!aiReview || !aiReview.issues || aiReview.issues.length === 0)) {
     const hasSkipped = state.dismissedSuggestions.size > 0;
     $('#review-content').innerHTML = `
       <div class="review-perfect">
