@@ -1177,59 +1177,92 @@ function buildNodeCard(node, opts = {}) {
   return el;
 }
 
+/* ── Ray-box intersection: find where a line from the node centre to a
+      target point exits the node rectangle. Returns {x, y, side}. ── */
+function edgePoint(nx, ny, nw, nh, tx, ty) {
+  const cx = nx + nw / 2, cy = ny + nh / 2;
+  const dx = tx - cx,     dy = ty - cy;
+  if (dx === 0 && dy === 0) return { x: cx + nw / 2, y: cy, side: 'right' };
+
+  const halfW = nw / 2, halfH = nh / 2;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  let x, y, side;
+
+  if (absDx * halfH >= absDy * halfW) {
+    // exits left or right
+    const sign = dx > 0 ? 1 : -1;
+    x = cx + sign * halfW;
+    y = cy + dy * halfW / absDx;
+    side = dx > 0 ? 'right' : 'left';
+  } else {
+    // exits top or bottom
+    const sign = dy > 0 ? 1 : -1;
+    x = cx + dx * halfH / absDy;
+    y = cy + sign * halfH;
+    side = dy > 0 ? 'bottom' : 'top';
+  }
+
+  // Keep point away from extreme corners (min 8 px margin)
+  if (side === 'left' || side === 'right') {
+    y = Math.max(ny + 8, Math.min(ny + nh - 8, y));
+  } else {
+    x = Math.max(nx + 8, Math.min(nx + nw - 8, x));
+  }
+  return { x, y, side };
+}
+
 function renderConnections(svg) {
   while (svg.children.length > 1) svg.removeChild(svg.lastChild);
 
   for (const conn of state.connections) {
     const fromNode = state.nodes.get(conn.from);
-    const toNode = state.nodes.get(conn.to);
+    const toNode   = state.nodes.get(conn.to);
     if (!fromNode || !toNode) continue;
 
     const fp = fromNode.positions.topic;
     const tp = toNode.positions.topic;
-    const fw = fromNode.isMain ? 280 : 240;
-    const tw = toNode.isMain ? 280 : 240;
+
+    // Use actual DOM dimensions when available
     const fEl = $(`.node-card[data-node-id="${conn.from}"]`);
     const tEl = $(`.node-card[data-node-id="${conn.to}"]`);
+    const fw = fEl ? fEl.offsetWidth  : (fromNode.isMain ? 280 : 240);
+    const tw = tEl ? tEl.offsetWidth  : (toNode.isMain   ? 280 : 240);
     const fh = fEl ? fEl.offsetHeight : 120;
     const th = tEl ? tEl.offsetHeight : 120;
 
+    // Centre points
     const fcx = fp.x + fw / 2, fcy = fp.y + fh / 2;
     const tcx = tp.x + tw / 2, tcy = tp.y + th / 2;
 
-    // Calculate exit/entry points on closest edges
-    let x1, y1, x2, y2;
-    const dx = tcx - fcx, dy = tcy - fcy;
-    if (Math.abs(dx) > Math.abs(dy)) {
-      // Horizontal dominant → exit/enter from left/right sides
-      if (dx > 0) {
-        x1 = fp.x + fw; y1 = fcy;
-        x2 = tp.x;      y2 = tcy;
-      } else {
-        x1 = fp.x;      y1 = fcy;
-        x2 = tp.x + tw; y2 = tcy;
-      }
-    } else {
-      // Vertical dominant → exit/enter from top/bottom
-      if (dy > 0) {
-        x1 = fcx; y1 = fp.y + fh;
-        x2 = tcx; y2 = tp.y;
-      } else {
-        x1 = fcx; y1 = fp.y;
-        x2 = tcx; y2 = tp.y + th;
-      }
-    }
+    // Precise edge exit / entry via ray-box intersection
+    const fromPt = edgePoint(fp.x, fp.y, fw, fh, tcx, tcy);
+    const toPt   = edgePoint(tp.x, tp.y, tw, th, fcx, fcy);
 
-    // Smooth cubic bezier with control points pulling toward the midpoint
-    const cpOffset = Math.max(40, Math.abs(x2 - x1) * 0.4, Math.abs(y2 - y1) * 0.4);
+    let x1 = fromPt.x, y1 = fromPt.y;
+    let x2 = toPt.x,   y2 = toPt.y;
+
+    // Pull target point 2 px outward so SVG arrowhead stays above node card
+    const arrowPad = 2;
+    if (toPt.side === 'right')  x2 += arrowPad;
+    if (toPt.side === 'left')   x2 -= arrowPad;
+    if (toPt.side === 'bottom') y2 += arrowPad;
+    if (toPt.side === 'top')    y2 -= arrowPad;
+
+    // Tight bezier: control points extend perpendicular to each edge
+    const dist  = Math.hypot(x2 - x1, y2 - y1);
+    const cpLen = Math.min(Math.max(16, dist * 0.2), 80);
+
     let cx1, cy1, cx2, cy2;
-    if (Math.abs(dx) > Math.abs(dy)) {
-      cx1 = x1 + (dx > 0 ? cpOffset : -cpOffset); cy1 = y1;
-      cx2 = x2 + (dx > 0 ? -cpOffset : cpOffset);  cy2 = y2;
-    } else {
-      cx1 = x1; cy1 = y1 + (dy > 0 ? cpOffset : -cpOffset);
-      cx2 = x2; cy2 = y2 + (dy > 0 ? -cpOffset : cpOffset);
-    }
+    if (fromPt.side === 'right')  { cx1 = x1 + cpLen; cy1 = y1; }
+    if (fromPt.side === 'left')   { cx1 = x1 - cpLen; cy1 = y1; }
+    if (fromPt.side === 'bottom') { cx1 = x1; cy1 = y1 + cpLen; }
+    if (fromPt.side === 'top')    { cx1 = x1; cy1 = y1 - cpLen; }
+
+    if (toPt.side === 'right')  { cx2 = x2 + cpLen; cy2 = y2; }
+    if (toPt.side === 'left')   { cx2 = x2 - cpLen; cy2 = y2; }
+    if (toPt.side === 'bottom') { cx2 = x2; cy2 = y2 + cpLen; }
+    if (toPt.side === 'top')    { cx2 = x2; cy2 = y2 - cpLen; }
+
     const d = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
 
     // Determine if this connection should be highlighted
