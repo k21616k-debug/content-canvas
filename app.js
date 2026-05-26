@@ -1428,8 +1428,8 @@ function renderPanel() {
 
       ${research ? `
       <div class="detail-divider"></div>
-      <div class="ai-research-section">
-        <label>📋 AI 研究摘要</label>
+      <details class="panel-accordion" open>
+        <summary>📋 AI 研究摘要</summary>
         <div class="ai-research-card">
           ${research.positioning ? `<div class="research-row"><span class="research-label">定位</span><span>${esc(research.positioning)}</span></div>` : ''}
           ${research.features ? `<div class="research-row"><span class="research-label">特色</span><span>${esc(research.features)}</span></div>` : ''}
@@ -1438,34 +1438,34 @@ function renderPanel() {
           ${research.audienceCares ? `<div class="research-row"><span class="research-label">觀眾在意</span><span>${esc(research.audienceCares)}</span></div>` : ''}
           ${research.searchKeywords ? `<div class="research-row"><span class="research-label">🔍 搜尋關鍵字</span><span class="search-keywords">${esc(research.searchKeywords)}</span></div>` : ''}
         </div>
-      </div>
+      </details>
       ` : ''}
 
       ${(node.hooks?.length > 0) ? `
       <div class="detail-divider"></div>
-      <div class="ai-hooks-section">
-        <label>🎤 建議 Hook <span class="field-hint-inline">— 影片前 3 秒抓住觀眾的那句話，3 種風格選一個</span></label>
+      <details class="panel-accordion">
+        <summary>🎤 建議 Hook — 3 種風格選一個</summary>
         ${node.hooks.map((h, i) => `
           <div class="hook-card">
             <span class="hook-style">${esc(h.style)}</span>
             <span class="hook-text">「${esc(h.text)}」</span>
           </div>
         `).join('')}
-      </div>
+      </details>
       ` : (research?.suggestedHook ? `
       <div class="detail-divider"></div>
-      <div class="ai-hooks-section">
-        <label>🎤 建議 Hook</label>
+      <details class="panel-accordion">
+        <summary>🎤 建議 Hook</summary>
         <div class="hook-card">
           <span class="hook-text">「${esc(research.suggestedHook)}」</span>
         </div>
-      </div>
+      </details>
       ` : '')}
 
       ${angles.length > 0 ? `
       <div class="detail-divider"></div>
-      <div class="ai-angles-section">
-        <label>🎬 建議拍攝方向</label>
+      <details class="panel-accordion">
+        <summary>🎬 建議拍攝方向 (${angles.length})</summary>
         ${angles.map((a, i) => `
           <div class="angle-card">
             <div class="angle-header">
@@ -1477,13 +1477,13 @@ function renderPanel() {
             ${a.howToShoot ? `<div class="angle-how">💡 ${esc(a.howToShoot)}</div>` : ''}
           </div>
         `).join('')}
-      </div>
+      </details>
       ` : ''}
 
       ${(node.detailShots?.length > 0) ? `
       <div class="detail-divider"></div>
-      <div class="ai-detail-shots-section">
-        <label>📸 產品細節拍攝清單</label>
+      <details class="panel-accordion">
+        <summary>📸 產品細節拍攝清單 (${node.detailShots.length})</summary>
         ${node.detailShots.map((d, i) => `
           <div class="detail-shot-card">
             <div class="detail-shot-header">
@@ -1495,15 +1495,15 @@ function renderPanel() {
             ${d.cameraSetup ? `<div class="angle-how">🎥 ${esc(d.cameraSetup)}</div>` : ''}
           </div>
         `).join('')}
-      </div>
+      </details>
       ` : ''}
 
       ${node.ecosystemNotes ? `
       <div class="detail-divider"></div>
-      <div class="ai-ecosystem-section">
-        <label>🔗 和其他影片的關聯</label>
+      <details class="panel-accordion">
+        <summary>🔗 和其他影片的關聯</summary>
         <div class="ecosystem-card">${esc(node.ecosystemNotes)}</div>
-      </div>
+      </details>
       ` : ''}
 
       ${(research || angles.length > 0) ? `
@@ -2670,16 +2670,33 @@ function showReviewPanel(suggestions, aiReview) {
       <div class="ai-review-score" style="border-color:${scoreColor};color:${scoreColor}">${aiReview.overallScore}/10</div>
       <div class="ai-review-summary">${esc(aiReview.summary || '')}</div>
     </div>`;
+    if (aiReview.quickWins && aiReview.quickWins.length > 0) {
+      html += `<div class="review-section-title">⚡ 馬上可以做</div>`;
+      for (const qw of aiReview.quickWins) {
+        html += `
+          <div class="review-card review-card-quickwin">
+            <div class="review-card-topic">✅ ${esc(qw.action)}</div>
+            <div class="review-card-reason">${esc(qw.why)}</div>
+          </div>`;
+      }
+    }
     if (aiReview.issues && aiReview.issues.length > 0) {
       html += `<div class="review-section-title">🤖 AI 策略分析</div>`;
       for (const issue of aiReview.issues) {
         const sevClass = issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-medium' : 'sev-low';
         const typeEmoji = { duplicate: '🔁', gap: '🕳️', quality: '💡', conflict: '⚡', opportunity: '🎯' }[issue.type] || '📌';
+        const newNodeHtml = issue.newNode ? `
+            <div class="review-card-newnode">
+              <span class="review-newnode-label">💡 建議新增：「${esc(issue.newNode.topic)}」</span>
+              <span class="review-newnode-meta">${esc(issue.newNode.job)} · ${esc(issue.newNode.reason)}</span>
+              <button class="ai-action-btn adopt review-create-node" data-topic="${esc(issue.newNode.topic)}" data-job="${esc(issue.newNode.job)}" data-stage="${esc(issue.newNode.stage)}">一鍵建立</button>
+            </div>` : '';
         html += `
           <div class="review-card review-card-ai ${sevClass}">
             <div class="review-card-topic">${typeEmoji} ${esc(issue.title)}</div>
             <div class="review-card-reason">${esc(issue.detail)}</div>
             <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
+            ${newNodeHtml}
           </div>`;
       }
     }
@@ -2688,6 +2705,13 @@ function showReviewPanel(suggestions, aiReview) {
         <div class="review-card review-card-ai sev-low">
           <div class="review-card-topic">📅 建議發布順序</div>
           <div class="review-card-reason">${esc(aiReview.publishOrder)}</div>
+        </div>`;
+    }
+    if (aiReview.strategyMap) {
+      html += `
+        <div class="review-card review-card-strategy">
+          <div class="review-card-topic">🗺️ 接下來怎麼做</div>
+          <div class="review-card-reason">${esc(aiReview.strategyMap)}</div>
         </div>`;
     }
     html += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">`;
@@ -2833,6 +2857,23 @@ function showReviewPanel(suggestions, aiReview) {
   });
   $$('.ghost-dismiss').forEach(btn => {
     btn.addEventListener('click', () => dismissGhost(btn.dataset.ghostId));
+  });
+
+  // Review one-click create node buttons
+  $$('.review-create-node').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const topic = btn.dataset.topic;
+      const job = btn.dataset.job;
+      const stage = btn.dataset.stage;
+      const nodes = [...state.nodes.values()];
+      const maxX = nodes.length > 0 ? nodes.reduce((m, n) => Math.max(m, n.positions.topic.x), 0) : 0;
+      const node = createNode({ topic, job, jobSecondary: '', cta: '', isMain: false }, maxX + 240, 60);
+      if (stage) node.positions.journey = { stage, order: 0 };
+      saveState();
+      render();
+      btn.textContent = '已建立 ✓';
+      btn.disabled = true;
+    });
   });
 }
 
@@ -3388,8 +3429,8 @@ function autoArrangeNodes() {
   if (nodes.length === 0) return;
 
   const cols = Math.ceil(Math.sqrt(nodes.length));
-  const gapX = 280;
-  const gapY = 240;
+  const gapX = 220;
+  const gapY = 170;
   const startX = 60;
   const startY = 60;
 
