@@ -1244,11 +1244,24 @@ function renderConnections(svg) {
     const x1 = fromPt.x, y1 = fromPt.y;
     const x2 = toPt.x,   y2 = toPt.y;
 
-    // Straight line from side midpoint to side midpoint — flush against card borders.
-    // No arrowPad: SVG is behind cards (z-index 1 vs 2), so endpoints at the card
-    // border are partially covered; the arrowhead marker (refX=7 on 8px wide tip)
-    // naturally straddles the border with its tip 1px inside (hidden) and body outside.
-    const d = `M${x1},${y1} L${x2},${y2}`;
+    // Smooth bezier curve: control points extend 30px outward from each card edge,
+    // then curve toward the target. This creates professional-looking connectors
+    // that exit perpendicular to the card border (like Figma / React Flow).
+    const gap = 30;
+    let cx1 = x1, cy1 = y1, cx2 = x2, cy2 = y2;
+    switch (fromPt.side) {
+      case 'right':  cx1 += gap; break;
+      case 'left':   cx1 -= gap; break;
+      case 'bottom': cy1 += gap; break;
+      case 'top':    cy1 -= gap; break;
+    }
+    switch (toPt.side) {
+      case 'right':  cx2 += gap; break;
+      case 'left':   cx2 -= gap; break;
+      case 'bottom': cy2 += gap; break;
+      case 'top':    cy2 -= gap; break;
+    }
+    const d = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
 
     // Determine if this connection should be highlighted
     const isActive = state.selectedNodeId === conn.from || state.selectedNodeId === conn.to
