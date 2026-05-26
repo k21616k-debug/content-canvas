@@ -563,10 +563,10 @@ function renderMaterialView(container) {
 }
 
 const GAP_HINTS = {
-  A: '入門科普、懶人包、迷思破解',
-  B: '開箱評測、規格比較、實測數據',
-  C: '長期使用心得、第三方認證、用戶見證',
-  D: '退換貨政策、保固說明、售後服務、滿意度回饋',
+  A: '有趣人物、爭議議題、故事性訪談',
+  B: '專家對談、技術深度、深度專訪',
+  C: '真實經驗、失敗故事、同業推薦',
+  D: '觀眾Q&A、社群人物、粉絲互動',
 };
 
 function renderJourneyView(container) {
@@ -680,6 +680,7 @@ function buildNodeCard(node, opts = {}) {
         <span class="compact-topic">${esc(node.main.topic)}</span>
         ${node.main.job ? `<span class="job-badge ${jobClass}" title="${JOB_DESC[node.main.job] || ''}">${esc(node.main.job)}</span>` : ''}
       </div>
+      ${node.guest ? `<div class="compact-user" style="color:#6366f1">🎤 ${esc(node.guest)}</div>` : ''}
       ${node.user ? `<div class="compact-user">${esc(node.user)}</div>` : ''}
       ${sourceHtml}
       ${crossBadge ? `<div class="compact-badges">${crossBadge}</div>` : ''}
@@ -700,6 +701,7 @@ function buildNodeCard(node, opts = {}) {
     <div class="node-main">
       ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
       <div class="node-topic">${esc(node.main.topic)}</div>
+      ${node.guest ? `<div class="node-guest">🎤 ${esc(node.guest)}</div>` : ''}
       <div class="node-meta">
         ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span><span class="job-desc">${JOB_DESC[node.main.job] || ''}</span>` : ''}
         ${node.main.cta ? `<span class="cta-text">CTA: ${esc(node.main.cta)}</span>` : ''}
@@ -1360,13 +1362,15 @@ function handleConnectClick(nodeId) {
 async function generateScript(node) {
   // Try real API first
   try {
-    const res = await fetch('/api/script', {
+    const res = await fetch('/api/interview-script', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         topic: node.main.topic,
         job: node.main.job,
         cta: node.main.cta,
+        guest: node.guest || '',
+        interviewType: node.interviewType || '',
         angles: node.filmingAngles,
         research: node.aiResearch,
         user: node.user,
@@ -1386,27 +1390,33 @@ function mockScript(node) {
   const angles = node.filmingAngles || [];
   const hook = node.aiResearch?.suggestedHook || node.main.topic;
   const cta = node.main.cta || '留言分享你的想法';
+  const guest = node.guest || '來賓';
 
   const lines = [];
-  lines.push(`【${node.main.topic}】腳本大綱`);
+  lines.push(`【${node.main.topic}】訪談腳本大綱`);
+  if (node.guest) lines.push(`來賓：${guest}`);
+  if (node.interviewType) lines.push(`類型：${node.interviewType}`);
   lines.push('');
-  lines.push(`[00:00-00:05] Hook`);
+  lines.push(`[00:00-00:10] Cold Open / Hook`);
   lines.push(`  「${hook}」`);
-  lines.push(`  畫面：產品特寫 → 快速切換使用場景`);
+  lines.push(`  畫面：來賓精彩片段預覽 → 標題`);
+  lines.push('');
+  lines.push(`[00:10-00:30] 來賓介紹`);
+  lines.push(`  主持人簡短介紹 ${guest} 的背景與為什麼找他`);
   lines.push('');
 
-  let timeStart = 5;
+  let timeStart = 30;
   angles.forEach((a, i) => {
-    const duration = i === 0 ? 40 : 30;
+    const duration = i === 0 ? 60 : 45;
     const end = timeStart + duration;
     const mm1 = String(Math.floor(timeStart / 60)).padStart(2, '0');
     const ss1 = String(timeStart % 60).padStart(2, '0');
     const mm2 = String(Math.floor(end / 60)).padStart(2, '0');
     const ss2 = String(end % 60).padStart(2, '0');
-    lines.push(`[${mm1}:${ss1}-${mm2}:${ss2}] 段落 ${i + 1}：${a.title}`);
-    lines.push(`  重點：${a.why}`);
-    if (a.howToShoot) lines.push(`  拍法：${a.howToShoot}`);
-    lines.push(`  旁白：（待撰寫）`);
+    const label = i === 0 ? '暖場題' : i === angles.length - 1 ? '收尾題' : `核心題 ${i}`;
+    lines.push(`[${mm1}:${ss1}-${mm2}:${ss2}] Q${i + 1}（${label}）：${a.title}`);
+    lines.push(`  目的：${a.why}`);
+    if (a.howToShoot) lines.push(`  追問方向：${a.howToShoot}`);
     lines.push('');
     timeStart = end;
   });
@@ -1414,8 +1424,9 @@ function mockScript(node) {
   const mm = String(Math.floor(timeStart / 60)).padStart(2, '0');
   const ss = String(timeStart % 60).padStart(2, '0');
   lines.push(`[${mm}:${ss}-結尾] 總結 + CTA`);
-  lines.push(`  「${cta}」`);
-  lines.push(`  畫面：產品全貌 + 資訊欄連結提示`);
+  lines.push(`  主持人總結本集重點`);
+  lines.push(`  CTA：「${cta}」`);
+  lines.push(`  畫面：雙人鏡頭 + 資訊欄連結提示`);
 
   return lines.join('\n');
 }
@@ -1503,7 +1514,7 @@ async function aiAsk(question, focusNodeId) {
     const fn = state.nodes.get(focusNodeId);
     if (fn) context.focusNode = { id: fn.id, topic: fn.main.topic };
   }
-  const res = await fetch('/api/ask', {
+  const res = await fetch('/api/interview-ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, context }),
@@ -1573,10 +1584,10 @@ function renderAskResult(container, result) {
 // ── AI: Auto-classify node ──
 async function aiClassifyNode(node) {
   try {
-    const res = await fetch('/api/classify', {
+    const res = await fetch('/api/interview-classify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: node.main.topic, userNotes: node.user || '' }),
+      body: JSON.stringify({ topic: node.main.topic, userNotes: node.user || '', guest: node.guest || '' }),
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -1651,27 +1662,27 @@ function analyzeCanvas() {
     if (!node.main.cta) missing.push('cta');
 
     if (missing.length > 0) {
-      // Infer best Job from topic content
+      // Infer best Job from topic content (interview-focused)
       let suggestedJob = '';
       let suggestedStage = node.positions.journey?.stage || 'A';
       const t = node.main.topic;
-      if (t.match(/入門|新手|懶人|科普|怎麼選|分.*種|類型/)) {
+      if (t.match(/故事|有趣|爭議|街訪|挑戰|趣味|搞笑/)) {
         suggestedJob = '吸引'; suggestedStage = 'A';
-      } else if (t.match(/評測|開箱|比較|對決|規格|評比|vs/i)) {
+      } else if (t.match(/專家|技術|深度|專訪|分析|知識|原理/)) {
         suggestedJob = '培育'; suggestedStage = 'B';
-      } else if (t.match(/心得|磨損|使用|回饋|見證|認證|實測/)) {
-        suggestedJob = '轉換'; suggestedStage = 'C';
-      } else if (t.match(/買|通路|比價|保固|退換|保養|售後/)) {
-        suggestedJob = '轉換'; suggestedStage = 'D';
-      } else if (t.match(/精華|剪輯|60秒|短/)) {
+      } else if (t.match(/經驗|失敗|真實|心路|同業|推薦|見證/)) {
+        suggestedJob = '培育'; suggestedStage = 'C';
+      } else if (t.match(/Q&A|社群|粉絲|觀眾|互動|座談/)) {
+        suggestedJob = '吸引'; suggestedStage = 'D';
+      } else if (t.match(/精華|剪輯|60秒|短|快問快答/)) {
         suggestedJob = '吸引'; suggestedStage = 'A';
       }
 
-      // Infer CTA
+      // Infer CTA (interview-focused)
       let suggestedCta = '';
-      if (suggestedJob === '吸引') suggestedCta = '看完整影片';
-      else if (suggestedJob === '培育') suggestedCta = '留言你最在意的功能';
-      else if (suggestedJob === '轉換') suggestedCta = '連結在資訊欄';
+      if (suggestedJob === '吸引') suggestedCta = '留言你想問來賓什麼';
+      else if (suggestedJob === '培育') suggestedCta = '留言分享你的經驗';
+      else if (suggestedJob === '轉換') suggestedCta = '追蹤來賓的社群';
 
       const fills = {};
       if (!node.main.job && suggestedJob) fills.job = suggestedJob;
@@ -1738,8 +1749,8 @@ function analyzeCanvas() {
   // Detect when a non-main node looks like a broader framework that should be the main
   const currentMain = nodes.find(n => n.isMain);
   if (currentMain) {
-    const frameworkPatterns = /分.*種|類型|完整解析|怎麼選|入門|總覽|指南|懶人包|科普/;
-    const specificPatterns = /評測|開箱|心得|磨損|回饋|比價|保固|精華|剪輯/;
+    const frameworkPatterns = /系列|總覽|專題|完整|指南|入門|懶人包|科普/;
+    const specificPatterns = /專訪|座談|街訪|快問快答|Q&A|精華|剪輯/;
 
     for (const node of nodes) {
       if (node.isMain || node.id === currentMain.id) continue;
@@ -1915,6 +1926,7 @@ async function runGlobalReview() {
   try {
     const nodes = [...state.nodes.values()].map(n => ({
       topic: n.main.topic, job: n.main.job, cta: n.main.cta,
+      guest: n.guest || '', interviewType: n.interviewType || '',
       stage: n.positions.journey?.stage, isMain: n.isMain,
       hook: n.aiResearch?.suggestedHook || '',
       angles: (n.filmingAngles || []).map(a => a.title).join('、'),
@@ -1923,7 +1935,7 @@ async function runGlobalReview() {
       fromTopic: state.nodes.get(c.from)?.main.topic || '?',
       toTopic: state.nodes.get(c.to)?.main.topic || '?',
     }));
-    const res = await fetch('/api/review', {
+    const res = await fetch('/api/interview-review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nodes, connections }),
