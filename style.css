@@ -1244,3 +1244,8 @@ kbd {
   border-radius: 5px; background: #f8fafc; font-size: 11px;
   font-family: monospace; box-shadow: 0 1px 0 #cbd5e1;
 }
+
+/* Inline field hint (beginner-friendly explanations) */
+.field-hint-inline {
+  font-size: 12px; font-weight: 400; color: #94a3b8;
+}

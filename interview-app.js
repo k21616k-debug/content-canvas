@@ -1289,7 +1289,7 @@ function renderPanel() {
       </div>
 
       <div class="detail-section">
-        <label>CTA</label>
+        <label>CTA <span class="field-hint-inline">— 影片結尾叫觀眾做的事（留言、點連結、追蹤…）</span></label>
         <input type="text" id="edit-cta" value="${esc(node.main.cta)}">
       </div>
 
@@ -1330,12 +1330,12 @@ function renderPanel() {
         `).join('')}
         ${research?.suggestedHook ? `
         <div class="angle-card angle-hook">
-          <div class="angle-header"><span class="angle-num">🎤</span><strong>建議 Hook</strong></div>
+          <div class="angle-header"><span class="angle-num">🎤</span><strong>建議 Hook</strong> <span class="field-hint-inline">— 影片前 3 秒抓住觀眾的那句話</span></div>
           <div class="angle-reason">「${esc(research.suggestedHook)}」</div>
         </div>` : ''}
         ${research?.suggestedCta ? `
         <div class="angle-card angle-cta">
-          <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong></div>
+          <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 影片結尾叫觀眾做的事</span></div>
           <div class="angle-reason">${esc(research.suggestedCta)}</div>
         </div>` : ''}
         <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果到備註</button>
