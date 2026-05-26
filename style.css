@@ -1256,3 +1256,181 @@ kbd {
   background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
   font-size: 13px; line-height: 1.5;
 }
+
+/* ── Hub card disabled (interview 封存) ── */
+.hub-card-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  position: relative;
+  filter: grayscale(0.6);
+}
+.hub-card-badge {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  background: #94a3b8;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ── Angle dismiss button (was missing CSS) ── */
+.angle-dismiss-btn,
+.detail-shot-dismiss-btn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.angle-dismiss-btn:hover,
+.detail-shot-dismiss-btn:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #ef4444;
+}
+
+/* ── Connection handles (edge-drag) ── */
+.node-card { position: relative; }
+.conn-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  opacity: 0;
+  cursor: crosshair;
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 10;
+}
+.node-card:hover .conn-handle { opacity: 1; }
+.conn-handle:hover { transform: scale(1.4); }
+.conn-handle-top { top: -6px; left: 50%; margin-left: -6px; }
+.conn-handle-right { right: -6px; top: 50%; margin-top: -6px; }
+.conn-handle-bottom { bottom: -6px; left: 50%; margin-left: -6px; }
+.conn-handle-left { left: -6px; top: 50%; margin-top: -6px; }
+
+/* ── AI Transparency section ── */
+.ai-transparency-section { margin-bottom: 4px; }
+.ai-transparency-details summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px 0;
+}
+.ai-transparency-details summary:hover { color: #3b82f6; }
+.ai-transparency-card {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 6px;
+}
+
+/* ── Hook cards ── */
+.ai-hooks-section { margin-bottom: 4px; }
+.hook-card {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  font-size: 13px;
+}
+.hook-style {
+  font-size: 11px;
+  font-weight: 600;
+  color: #d97706;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.hook-text {
+  color: #1e293b;
+  line-height: 1.4;
+}
+
+/* ── Detail shot cards ── */
+.detail-shot-card {
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+.detail-shot-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Ecosystem notes ── */
+.ecosystem-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b21a8;
+}
+
+/* ── Search keywords ── */
+.search-keywords {
+  color: #0369a1;
+  font-weight: 500;
+}
+
+/* ── Secondary job badge ── */
+.job-badge-secondary {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  border: 1px dashed;
+}
+.job-badge-secondary.job-attract { color: var(--attract); border-color: var(--attract); background: rgba(59,130,246,0.08); }
+.job-badge-secondary.job-nurture { color: var(--nurture); border-color: var(--nurture); background: rgba(16,185,129,0.08); }
+.job-badge-secondary.job-convert { color: var(--convert); border-color: var(--convert); background: rgba(245,158,11,0.08); }
+
+/* ── Canvas tool button (auto-arrange) ── */
+.canvas-tool-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10;
+  padding: 8px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  transition: all 0.15s;
+}
+.canvas-tool-btn:hover {
+  background: #f1f5f9;
+  border-color: #3b82f6;
+}
+
+/* ── Canvas panning cursor ── */
+#canvas-area { cursor: default; }
+#canvas-area.panning { cursor: grabbing; }

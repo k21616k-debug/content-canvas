@@ -29,6 +29,10 @@ const state = {
   ghostNodes: [],       // AI-suggested placeholder nodes
   dismissedSuggestions: new Set(), // IDs of skipped suggestions (persisted per project)
   lastAiReview: null,   // Cached AI review result (preserved across adopt/dismiss)
+  // Canvas panning
+  panState: null,        // { startX, startY, scrollLeft, scrollTop }
+  // Edge-drag connection
+  connDragState: null,   // { fromNodeId, startX, startY }
 };
 
 // ── Project Management ──
@@ -173,15 +177,21 @@ async function loadState() {
 
 // ── Node CRUD ──
 
-function createNode({ topic, job, cta, isMain }, x, y) {
+function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
   const id = 'n' + Date.now() + Math.random().toString(36).slice(2, 6);
   const node = {
     id,
-    main: { topic, job: job || '', cta: cta || '' },
+    main: { topic, job: job || '', jobSecondary: jobSecondary || '', cta: cta || '' },
     user: '',
     aiSuggest: [],
     aiResearch: null,
     filmingAngles: [],
+    detailShots: [],
+    hooks: [],
+    aiInputType: '',
+    aiReceivedSummary: '',
+    targetAudience: '',
+    ecosystemNotes: '',
     isMain: !!isMain,
     positions: {
       topic: { x, y },
@@ -205,7 +215,11 @@ function deleteNode(id) {
 function updateNode(id, updates) {
   const node = state.nodes.get(id);
   if (!node) return;
-  if (updates.main) Object.assign(node.main, updates.main);
+  if (updates.main) {
+    // Ensure jobSecondary field exists
+    if (!node.main.jobSecondary) node.main.jobSecondary = '';
+    Object.assign(node.main, updates.main);
+  }
   if (updates.user !== undefined) node.user = updates.user;
   if (updates.aiSuggest) node.aiSuggest = updates.aiSuggest;
   if (updates.isMain !== undefined) node.isMain = updates.isMain;
@@ -1045,7 +1059,8 @@ function buildNodeCard(node, opts = {}) {
       </div>
       <div class="node-topic">${esc(node.main.topic)}</div>
       <div class="node-meta">
-        ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span><span class="job-desc">${JOB_DESC[node.main.job] || ''}</span>` : '<span class="job-badge job-unset">未指定</span>'}
+        ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span>` : '<span class="job-badge job-unset">未指定</span>'}
+        ${node.main.jobSecondary ? `<span class="job-badge-secondary ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[node.main.jobSecondary] || ''}">${esc(node.main.jobSecondary)}</span>` : ''}
         ${node.positions.journey?.stage ? `<span class="stage-badge stage-${node.positions.journey.stage}">${esc(JOURNEY_LABELS[node.positions.journey.stage])}</span>` : ''}
         ${connCount > 0 ? `<span class="conn-count-badge">🔗 ${connCount}</span>` : ''}
         ${node.main.cta ? `<span class="cta-text">CTA: ${esc(node.main.cta)}</span>` : ''}
@@ -1125,6 +1140,39 @@ function buildNodeCard(node, opts = {}) {
     state.hoveredNodeId = null;
     highlightConnections(state.selectedNodeId);
   });
+
+  // Add connection handles (only in non-compact mode for topic free view)
+  if (!compact) {
+    ['top', 'right', 'bottom', 'left'].forEach(pos => {
+      const handle = document.createElement('div');
+      handle.className = `conn-handle conn-handle-${pos}`;
+      handle.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        state.connDragState = {
+          fromNodeId: node.id,
+          startX: e.clientX,
+          startY: e.clientY,
+        };
+        // Create temp SVG line
+        const svg = document.getElementById('connections-svg');
+        if (svg) {
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.id = 'conn-temp-line';
+          line.classList.add('temp-line');
+          const area = $('#canvas-area');
+          const z = state.zoomLevel;
+          line.setAttribute('x1', (e.clientX - area.getBoundingClientRect().left + area.scrollLeft) / z);
+          line.setAttribute('y1', (e.clientY - area.getBoundingClientRect().top + area.scrollTop) / z);
+          line.setAttribute('x2', line.getAttribute('x1'));
+          line.setAttribute('y2', line.getAttribute('y1'));
+          svg.appendChild(line);
+        }
+      });
+      el.appendChild(handle);
+    });
+  }
 
   return el;
 }
@@ -1244,6 +1292,11 @@ function renderPanel() {
       return `<option value="${j}" ${node.main.job === j ? 'selected' : ''}>${j || '未指定'}${desc}</option>`;
     }).join('');
 
+    const jobSecondaryOptions = ['', '吸引', '培育', '轉換'].map(j => {
+      const desc = JOB_DESC[j] ? ` — ${JOB_DESC[j]}` : '';
+      return `<option value="${j}" ${(node.main.jobSecondary || '') === j ? 'selected' : ''}>${j || '無'}${desc}</option>`;
+    }).join('');
+
     const stageOptions = Object.entries(JOURNEY_LABELS).map(([k, v]) =>
       `<option value="${k}" ${node.positions.journey?.stage === k ? 'selected' : ''}>${v}</option>`
     ).join('');
@@ -1264,14 +1317,20 @@ function renderPanel() {
 
       <div class="detail-row">
         <div class="detail-half">
-          <label>影片目的</label>
+          <label>主要用途</label>
           <select id="edit-job">${jobOptions}</select>
         </div>
+        <div class="detail-half">
+          <label>次要用途</label>
+          <select id="edit-job-secondary">${jobSecondaryOptions}</select>
+        </div>
+      </div>
+
+      <div class="detail-row">
         <div class="detail-half">
           <label>階段</label>
           <select id="edit-stage">${stageOptions}</select>
         </div>
-      </div>
 
       <div class="detail-row">
         <div class="detail-half">
@@ -1298,6 +1357,20 @@ function renderPanel() {
         <button class="expand-btn" id="btn-expand" title="根據你的筆記，用 AI 自動擴寫成影片企劃">✨ AI 擴寫企劃</button>
       </div>
 
+      ${node.aiReceivedSummary ? `
+      <div class="detail-divider"></div>
+      <div class="ai-transparency-section">
+        <details class="ai-transparency-details">
+          <summary>📋 AI 收到的資訊</summary>
+          <div class="ai-transparency-card">
+            <div class="research-row"><span class="research-label">AI 理解</span><span>${esc(node.aiReceivedSummary)}</span></div>
+            ${node.aiInputType ? `<div class="research-row"><span class="research-label">輸入類型</span><span>${esc({product:'產品型',concept:'概念型','pain-point':'痛點型',trend:'趨勢型'}[node.aiInputType] || node.aiInputType)}</span></div>` : ''}
+            ${node.targetAudience ? `<div class="research-row"><span class="research-label">目標觀眾</span><span>${esc(node.targetAudience)}</span></div>` : ''}
+          </div>
+        </details>
+      </div>
+      ` : ''}
+
       ${research ? `
       <div class="detail-divider"></div>
       <div class="ai-research-section">
@@ -1308,9 +1381,31 @@ function renderPanel() {
           ${research.competitors ? `<div class="research-row"><span class="research-label">競品</span><span>${esc(research.competitors)}</span></div>` : ''}
           ${research.priceRange ? `<div class="research-row"><span class="research-label">價格帶</span><span>${esc(research.priceRange)}</span></div>` : ''}
           ${research.audienceCares ? `<div class="research-row"><span class="research-label">觀眾在意</span><span>${esc(research.audienceCares)}</span></div>` : ''}
+          ${research.searchKeywords ? `<div class="research-row"><span class="research-label">🔍 搜尋關鍵字</span><span class="search-keywords">${esc(research.searchKeywords)}</span></div>` : ''}
         </div>
       </div>
       ` : ''}
+
+      ${(node.hooks?.length > 0) ? `
+      <div class="detail-divider"></div>
+      <div class="ai-hooks-section">
+        <label>🎤 建議 Hook <span class="field-hint-inline">— 影片前 3 秒抓住觀眾的那句話，3 種風格選一個</span></label>
+        ${node.hooks.map((h, i) => `
+          <div class="hook-card">
+            <span class="hook-style">${esc(h.style)}</span>
+            <span class="hook-text">「${esc(h.text)}」</span>
+          </div>
+        `).join('')}
+      </div>
+      ` : (research?.suggestedHook ? `
+      <div class="detail-divider"></div>
+      <div class="ai-hooks-section">
+        <label>🎤 建議 Hook</label>
+        <div class="hook-card">
+          <span class="hook-text">「${esc(research.suggestedHook)}」</span>
+        </div>
+      </div>
+      ` : '')}
 
       ${angles.length > 0 ? `
       <div class="detail-divider"></div>
@@ -1321,16 +1416,44 @@ function renderPanel() {
             <div class="angle-header">
               <span class="angle-num">${i + 1}</span>
               <strong>${esc(a.title)}</strong>
+              <button class="angle-dismiss-btn" data-angle-idx="${i}" title="移除此建議">✕</button>
             </div>
             <div class="angle-reason">→ 觀眾在意：${esc(a.why)}</div>
             ${a.howToShoot ? `<div class="angle-how">💡 ${esc(a.howToShoot)}</div>` : ''}
           </div>
         `).join('')}
-        ${research?.suggestedHook ? `
-        <div class="angle-card angle-hook">
-          <div class="angle-header"><span class="angle-num">🎤</span><strong>建議 Hook</strong> <span class="field-hint-inline">— 影片前 3 秒抓住觀眾的那句話</span></div>
-          <div class="angle-reason">「${esc(research.suggestedHook)}」</div>
-        </div>` : ''}
+      </div>
+      ` : ''}
+
+      ${(node.detailShots?.length > 0) ? `
+      <div class="detail-divider"></div>
+      <div class="ai-detail-shots-section">
+        <label>📸 產品細節拍攝清單</label>
+        ${node.detailShots.map((d, i) => `
+          <div class="detail-shot-card">
+            <div class="detail-shot-header">
+              <span class="angle-num">📷</span>
+              <strong>${esc(d.what)}</strong>
+              <button class="detail-shot-dismiss-btn" data-shot-idx="${i}" title="移除">✕</button>
+            </div>
+            <div class="angle-reason">→ ${esc(d.why)}</div>
+            ${d.cameraSetup ? `<div class="angle-how">🎥 ${esc(d.cameraSetup)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+
+      ${node.ecosystemNotes ? `
+      <div class="detail-divider"></div>
+      <div class="ai-ecosystem-section">
+        <label>🔗 和其他影片的關聯</label>
+        <div class="ecosystem-card">${esc(node.ecosystemNotes)}</div>
+      </div>
+      ` : ''}
+
+      ${(research || angles.length > 0) ? `
+      <div class="detail-divider"></div>
+      <div class="ai-actions-section">
         ${research?.suggestedCta ? `
         <div class="angle-card angle-cta">
           <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 影片結尾叫觀眾做的事</span></div>
@@ -1377,10 +1500,12 @@ function renderPanel() {
     `;
 
     $('#btn-save-node').addEventListener('click', () => {
+      const jobSecEl = $('#edit-job-secondary');
       updateNode(node.id, {
         main: {
           topic: $('#edit-topic').value,
           job: $('#edit-job').value,
+          jobSecondary: jobSecEl ? jobSecEl.value : '',
           cta: $('#edit-cta').value,
         },
         user: $('#edit-user').value,
@@ -1395,10 +1520,12 @@ function renderPanel() {
 
     // Auto-save on change for all fields
     function autoSaveNode() {
+      const jobSecEl = $('#edit-job-secondary');
       const updates = {
         main: {
           topic: $('#edit-topic').value,
           job: $('#edit-job').value,
+          jobSecondary: jobSecEl ? jobSecEl.value : '',
           cta: $('#edit-cta').value,
         },
         user: $('#edit-user').value,
@@ -1425,7 +1552,7 @@ function renderPanel() {
       const el = $(sel);
       if (el) el.addEventListener('blur', autoSaveNode);
     });
-    ['#edit-job', '#edit-stage', '#edit-material', '#edit-main'].forEach(sel => {
+    ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main'].forEach(sel => {
       const el = $(sel);
       if (el) el.addEventListener('change', autoSaveNode);
     });
@@ -1524,7 +1651,13 @@ function renderPanel() {
         const result = await expandContent(topic, userText, node.main.job);
         if (result) {
           node.aiResearch = result.research;
-          node.filmingAngles = result.angles;
+          node.filmingAngles = result.angles || [];
+          node.detailShots = result.detailShots || [];
+          node.hooks = result.hooks || [];
+          node.aiInputType = result.inputType || '';
+          node.aiReceivedSummary = result.aiReceivedSummary || '';
+          node.targetAudience = result.targetAudience || '';
+          node.ecosystemNotes = result.ecosystemNotes || '';
           saveState();
           renderPanel();
         }
@@ -1535,6 +1668,32 @@ function renderPanel() {
       }
     });
 
+    // Dismiss individual filming angles
+    $$('.angle-dismiss-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.angleIdx, 10);
+        if (node.filmingAngles && node.filmingAngles[idx] != null) {
+          node.filmingAngles.splice(idx, 1);
+          saveState();
+          renderPanel(node);
+        }
+      });
+    });
+
+    // Dismiss individual detail shots
+    $$('.detail-shot-dismiss-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.shotIdx, 10);
+        if (node.detailShots && node.detailShots[idx] != null) {
+          node.detailShots.splice(idx, 1);
+          saveState();
+          renderPanel(node);
+        }
+      });
+    });
+
     // Adopt research results into user notes
     $('#btn-adopt-research')?.addEventListener('click', () => {
       const parts = [];
@@ -1543,6 +1702,13 @@ function renderPanel() {
         if (r.positioning) parts.push(`定位：${r.positioning}`);
         if (r.features) parts.push(`特色：${r.features}`);
         if (r.competitors) parts.push(`競品：${r.competitors}`);
+        if (r.searchKeywords) parts.push(`搜尋關鍵字：${r.searchKeywords}`);
+      }
+      if (node.hooks?.length > 0) {
+        parts.push('Hook 選項：');
+        node.hooks.forEach(h => parts.push(`- ${h.style}：${h.text}`));
+      } else if (node.aiResearch?.suggestedHook) {
+        parts.push(`Hook：${node.aiResearch.suggestedHook}`);
       }
       if (node.filmingAngles?.length > 0) {
         parts.push('拍攝方向：');
@@ -1550,11 +1716,15 @@ function renderPanel() {
           parts.push(`${i + 1}. ${a.title} → ${a.why}`);
         });
       }
-      if (node.aiResearch?.suggestedHook) {
-        parts.push(`Hook：${node.aiResearch.suggestedHook}`);
+      if (node.detailShots?.length > 0) {
+        parts.push('產品細節拍攝：');
+        node.detailShots.forEach(d => parts.push(`- ${d.what}：${d.why}`));
       }
       if (node.aiResearch?.suggestedCta) {
         node.main.cta = node.aiResearch.suggestedCta;
+      }
+      if (node.ecosystemNotes) {
+        parts.push(`影片關聯：${node.ecosystemNotes}`);
       }
       node.user = node.user ? node.user + '\n\n' + parts.join('\n') : parts.join('\n');
       saveState();
@@ -1761,10 +1931,47 @@ function handleConnectClick(nodeId) {
     if (!exists) {
       state.connections.push({ from: state.connectFrom, to: nodeId });
       saveState();
+      // Trigger causal chain reasoning
+      suggestCausalNode(state.connectFrom, nodeId);
     }
     state.connectFrom = null;
     state.connectMode = false;
     render();
+  }
+}
+
+// ── Causal Chain: Suggest node C when A→B is connected ──
+async function suggestCausalNode(fromId, toId) {
+  const fromNode = state.nodes.get(fromId);
+  const toNode = state.nodes.get(toId);
+  if (!fromNode || !toNode) return;
+
+  try {
+    const result = await aiAsk(
+      `我剛把「${fromNode.main.topic}」和「${toNode.main.topic}」連在一起。根據這兩支影片的關聯，建議下一支可以延伸的影片主題是什麼？同時告訴我 End Screen 怎麼互相推薦。請用 new-node action 建議一個新節點。`,
+      fromId
+    );
+    if (result?.actions?.length > 0) {
+      for (const action of result.actions) {
+        if (action.type === 'new-node' && action.topic) {
+          // Add as ghost node
+          const ghostId = 'ghost_causal_' + Date.now();
+          state.ghostNodes.push({
+            id: ghostId,
+            type: 'new-node',
+            topic: action.topic,
+            job: action.job || '',
+            stage: action.stage || 'A',
+            reason: `由「${fromNode.main.topic}」→「${toNode.main.topic}」的連線推導` + (result.answer ? `：${result.answer}` : ''),
+            connectTo: toId,
+          });
+        }
+      }
+      saveState();
+      render();
+    }
+  } catch (err) {
+    console.error('Causal chain suggestion failed:', err);
   }
 }
 
@@ -1834,12 +2041,17 @@ function mockScript(node) {
 }
 
 async function expandContent(topic, userNotes, job) {
+  // Collect existing node topics for ecosystem awareness
+  const existingNodes = [...state.nodes.values()]
+    .filter(n => n.main.topic !== topic) // exclude self
+    .map(n => ({ topic: n.main.topic, job: n.main.job }));
+
   // Try real API first, fall back to mock
   try {
     const res = await fetch('/api/expand', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, userNotes, job }),
+      body: JSON.stringify({ topic, userNotes, job, existingNodes }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -1852,108 +2064,30 @@ async function expandContent(topic, userNotes, job) {
 }
 
 function mockExpand(topic, userNotes) {
-  const t = topic + ' ' + (userNotes || '');
-  const isAlpaka = /alpaka/i.test(t);
-  const isHelmet = /安全帽|頭盔|helmet/i.test(t);
-  const isBackpack = /背包|backpack/i.test(t);
-
-  if (isAlpaka) {
-    return {
-      research: {
-        positioning: '通勤導向機能背包，NT$3,200~9,600，主打磁吸扣與防撕裂布料',
-        features: 'Maglockz 磁吸扣系統、Axoflux 防撕裂尼龍、隱藏快取口袋、可容納 14~16 吋筆電',
-        competitors: '同價位：Tomtoc Navigator ($2,990)、Incase City ($3,490)、Peak Design Everyday ($5,990)',
-        priceRange: 'NT$3,200（Element Tech）～ NT$9,630（Travel Backpack）',
-        audienceCares: '單手開關速度、下雨天實際防水效果、長時間騎車背負舒適度',
-        suggestedHook: '通勤包的磁吸扣到底有沒有用？實測給你看',
-        suggestedCta: '你覺得通勤包最重要的功能是什麼？留言告訴我',
-      },
-      angles: [
-        { title: '磁吸扣 vs 拉鏈開合速度實測', why: '趕上班時能不能單手3秒打開', howToShoot: '拍正面視角，左手拉鏈包 vs 右手磁吸包，計時對比' },
-        { title: '淋雨 30 分鐘防水測試', why: '台灣騎車一定碰到下雨，這是最直接的痛點', howToShoot: '花灑模擬大雨，拉開拉鏈看內部有沒有濕' },
-        { title: '14 吋筆電放入空間感', why: '通勤族最怕電腦放不進去或保護不夠', howToShoot: '實際放入 MacBook Pro 14"，展示剩餘空間和緩衝層' },
-      ],
-    };
-  }
-
-  if (isBackpack && !isAlpaka) {
-    return {
-      research: {
-        positioning: '騎士背包選購指南 — 從通勤到長途，不同騎法需要不同包型',
-        features: '軟包（輕便、日常通勤）、硬殼（防撞保護、重機騎士）、防水包（全天候騎乘）',
-        competitors: '軟包代表：Alpaka、Tomtoc ／ 硬殼代表：Boblbee、OGIO ／ 防水代表：Stream Trail、Ortlieb',
-        priceRange: '軟包 NT$1,500~5,000 ／ 硬殼 NT$4,000~12,000 ／ 防水 NT$2,000~6,000',
-        audienceCares: '哪種類型適合我的騎法、重量 vs 保護力的取捨、下雨天的對應方案',
-        suggestedHook: '你的騎車背包選對了嗎？選錯類型再貴也沒用',
-        suggestedCta: '你是軟包派還是硬殼派？留言告訴我',
-      },
-      angles: [
-        { title: '三種包型實際上車對比', why: '觀眾想知道騎車時的真實差異，不是桌上比規格', howToShoot: '同一段路，分別背三種包騎一趟，拍背部視角和騎士反應' },
-        { title: '摔車模擬：硬殼包到底能不能保護筆電', why: '硬殼包最大賣點是保護，但真的有效嗎？', howToShoot: '把筆電放在包裡從 1 公尺高摔下，開箱看結果' },
-        { title: '大雨實測：三種包的防水等級差多少', why: '台灣騎士最怕下雨，這是剛需', howToShoot: '花灑淋 10 分鐘，分別打開三個包看內部濕度' },
-      ],
-    };
-  }
-
-  if (isHelmet) {
-    return {
-      research: {
-        positioning: '騎士安全帽',
-        features: '需要根據具體型號查詢',
-        competitors: 'SHOEI、Arai、AGV、SOL、ZEUS',
-        audienceCares: '安全認證等級、包覆性、通風、重量、鏡片防霧',
-        suggestedHook: '你的安全帽真的安全嗎？認證等級差很多',
-        suggestedCta: '你現在戴什麼帽？留言分享',
-      },
-      angles: [
-        { title: '安全認證等級解析', why: 'DOT vs ECE vs SNELL 差異大，觀眾搞不清楚', howToShoot: '用圖卡解釋認證差異，搭配實際帽款標籤特寫' },
-        { title: '包覆性實測', why: '新手最怕買到不合頭型的', howToShoot: '找不同頭型的人試戴，拍側面貼合度' },
-        { title: '通風系統比較', why: '台灣夏天悶熱是最大痛點', howToShoot: '用線香測試進氣口氣流方向' },
-      ],
-    };
-  }
-
-  // Generic fallback
+  // Generic fallback mock — only used when API is unavailable
   return {
+    inputType: 'concept',
+    aiReceivedSummary: `收到主題「${topic}」${userNotes ? `，使用者想拍：${userNotes.substring(0, 50)}` : ''}`,
+    targetAudience: '對摩托車裝備感興趣的騎士',
     research: {
       positioning: `${topic} — 需要更多資訊來定位`,
       features: userNotes || '（請補充產品特色）',
       audienceCares: '品質、價格、實用性',
-      suggestedHook: `關於${topic}，你可能不知道的三件事`,
+      searchKeywords: `${topic}推薦、${topic}評測、${topic}怎麼選`,
       suggestedCta: `你用過${topic}嗎？留言分享你的經驗`,
     },
+    hooks: [
+      { style: '好奇缺口', text: `關於${topic}，你可能不知道的三件事` },
+      { style: '大膽宣言', text: `${topic}我用了一年，結論是...` },
+      { style: '故事引入', text: `上次騎車遇到的事讓我重新想了${topic}這件事` },
+    ],
     angles: [
       { title: '開箱 & 第一印象', why: '觀眾想看到實際產品的樣子', howToShoot: '從包裝到拿出來的完整過程' },
-      { title: '實際使用 30 天心得', why: '真實使用感受比規格更有說服力', howToShoot: '記錄日常使用畫面，搭配旁白說感想' },
+      { title: '實際使用心得', why: '真實使用感受比規格更有說服力', howToShoot: '記錄日常使用畫面，搭配旁白說感想' },
     ],
+    detailShots: [],
+    ecosystemNotes: '這是第一支影片，建議之後規劃相關的比較或教學類內容',
   };
-}
-
-// ── API ──
-
-async function fetchSuggestion(nodeId) {
-  const node = state.nodes.get(nodeId);
-  if (!node) return;
-  try {
-    const res = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'suggest',
-        topic: node.main.topic,
-        job: node.main.job,
-        cta: node.main.cta,
-      }),
-    });
-    const data = await res.json();
-    if (data.result) {
-      const suggestions = data.result.split('\n').map(s => s.trim()).filter(Boolean);
-      updateNode(nodeId, { aiSuggest: suggestions });
-      render();
-    }
-  } catch (err) {
-    console.error('AI suggest failed:', err);
-  }
 }
 
 // ── AI: Ask (global or node-specific) ──
@@ -2051,7 +2185,16 @@ async function aiClassifyNode(node) {
     });
     if (!res.ok) return;
     const data = await res.json();
-    if (data.job && !node.main.job) node.main.job = data.job;
+
+    // If input is too vague, skip auto-classification
+    if (data.isVague) {
+      // Show a hint that user should use AI expand
+      console.log('Vague input detected, skipping auto-classify');
+      return;
+    }
+
+    if (data.primaryJob && !node.main.job) node.main.job = data.primaryJob;
+    if (data.secondaryJob && !node.main.jobSecondary) node.main.jobSecondary = data.secondaryJob;
     if (data.cta && !node.main.cta) node.main.cta = data.cta;
     if (data.stage) node.positions.journey = { ...node.positions.journey, stage: data.stage };
     saveState();
@@ -2484,6 +2627,13 @@ function showReviewPanel(suggestions, aiReview) {
             <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
           </div>`;
       }
+    }
+    if (aiReview.publishOrder) {
+      html += `
+        <div class="review-card review-card-ai sev-low">
+          <div class="review-card-topic">📅 建議發布順序</div>
+          <div class="review-card-reason">${esc(aiReview.publishOrder)}</div>
+        </div>`;
     }
     html += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">`;
   } else if (suggestions.length > 0) {
@@ -3176,6 +3326,38 @@ function generateGlobalBrief() {
   }
 }
 
+// ── Auto-arrange nodes ──
+
+function autoArrangeNodes() {
+  const nodes = [...state.nodes.values()];
+  if (nodes.length === 0) return;
+
+  const cols = Math.ceil(Math.sqrt(nodes.length));
+  const gapX = 280;
+  const gapY = 240;
+  const startX = 60;
+  const startY = 60;
+
+  // Sort: main nodes first, then by job, then by created time
+  const sorted = nodes.sort((a, b) => {
+    if (a.isMain !== b.isMain) return b.isMain ? 1 : -1;
+    const jobOrder = { '吸引': 0, '培育': 1, '轉換': 2 };
+    const ja = jobOrder[a.main.job] ?? 3;
+    const jb = jobOrder[b.main.job] ?? 3;
+    if (ja !== jb) return ja - jb;
+    return a.createdAt - b.createdAt;
+  });
+
+  sorted.forEach((node, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    node.positions.topic = { x: startX + col * gapX, y: startY + row * gapY };
+  });
+
+  saveState();
+  render();
+}
+
 // ── Modal ──
 
 function showModal(x, y) {
@@ -3185,6 +3367,10 @@ function showModal(x, y) {
   $('#input-topic').value = '';
   $('#input-cta').value = '';
   $('#input-main').checked = false;
+
+  // Reset secondary job
+  const jobSecondaryEl = $('#input-job-secondary');
+  if (jobSecondaryEl) jobSecondaryEl.value = '';
 
   // Auto-fill Job when creating from a journey stage
   const stageAssign = state.pendingColumnAssign?.journey?.stage;
@@ -3292,9 +3478,11 @@ function bindEvents() {
     if (!topic) return;
     const pos = state.pendingPosition || { x: 100, y: 100 };
     const stageVal = $('#input-stage') ? $('#input-stage').value : '';
+    const jobSecondaryEl = $('#input-job-secondary');
     const node = createNode({
       topic,
       job: $('#input-job').value,
+      jobSecondary: jobSecondaryEl ? jobSecondaryEl.value : '',
       cta: $('#input-cta').value,
       isMain: $('#input-main').checked,
     }, pos.x, pos.y);
@@ -3363,8 +3551,83 @@ function bindEvents() {
     render();
   }, { passive: false });
 
+  // Canvas panning — drag empty space to move canvas
+  const canvasArea = $('#canvas-area');
+  canvasArea.addEventListener('pointerdown', (e) => {
+    // Only pan when clicking empty canvas (not nodes, handles, etc.)
+    if (e.target.closest('.node-card') || e.target.closest('.conn-handle') || e.target.closest('.ghost-node')) return;
+    if (state.currentView !== 'topic' || state.topicMode !== 'free') return;
+    if (e.button !== 0) return;
+    state.panState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: canvasArea.scrollLeft,
+      scrollTop: canvasArea.scrollTop,
+    };
+    canvasArea.style.cursor = 'grabbing';
+  });
+
+  // Global move handler for canvas pan + connection drag
+  document.addEventListener('pointermove', (e) => {
+    // Canvas panning
+    if (state.panState) {
+      canvasArea.scrollLeft = state.panState.scrollLeft - (e.clientX - state.panState.startX);
+      canvasArea.scrollTop = state.panState.scrollTop - (e.clientY - state.panState.startY);
+    }
+
+    // Connection drag
+    if (state.connDragState) {
+      const line = document.getElementById('conn-temp-line');
+      if (line) {
+        const area = $('#canvas-area');
+        const z = state.zoomLevel;
+        line.setAttribute('x2', (e.clientX - area.getBoundingClientRect().left + area.scrollLeft) / z);
+        line.setAttribute('y2', (e.clientY - area.getBoundingClientRect().top + area.scrollTop) / z);
+      }
+    }
+  });
+
+  // Global up handler for canvas pan + connection drag
+  document.addEventListener('pointerup', (e) => {
+    // End canvas panning
+    if (state.panState) {
+      state.panState = null;
+      canvasArea.style.cursor = '';
+    }
+
+    // End connection drag
+    if (state.connDragState) {
+      const fromId = state.connDragState.fromNodeId;
+      state.connDragState = null;
+
+      // Remove temp line
+      const line = document.getElementById('conn-temp-line');
+      if (line) line.remove();
+
+      // Check if dropped on another node
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const targetCard = target?.closest('.node-card');
+      if (targetCard) {
+        const toId = targetCard.dataset.nodeId;
+        if (toId && toId !== fromId) {
+          const exists = state.connections.some(
+            c => (c.from === fromId && c.to === toId) || (c.from === toId && c.to === fromId)
+          );
+          if (!exists) {
+            state.connections.push({ from: fromId, to: toId });
+            saveState();
+            render();
+            // Trigger causal chain reasoning
+            suggestCausalNode(fromId, toId);
+          }
+        }
+      }
+    }
+  });
+
   $('#btn-review').addEventListener('click', runGlobalReview);
   $('#btn-brief').addEventListener('click', generateBrief);
+  $('#btn-auto-arrange')?.addEventListener('click', autoArrangeNodes);
   $('#btn-help')?.addEventListener('click', () => {
     const helpEl = document.getElementById('shortcut-overlay');
     if (helpEl) helpEl.classList.toggle('hidden');

@@ -57,6 +57,7 @@
       </svg>
       <div id="canvas"></div>
       <button id="btn-add" title="新增節點 (或雙擊畫布)">＋ 新增節點</button>
+      <button id="btn-auto-arrange" class="canvas-tool-btn" title="自動排列節點">⬜ 排列</button>
     </div>
 
     <aside id="panel">
@@ -107,13 +108,23 @@
       <h3>新增節點</h3>
       <form id="node-form">
         <label>
-          主題 <span class="required">*</span>
-          <input type="text" id="input-topic" required placeholder="這支影片要講什麼？例：SOL 安全帽開箱" autofocus>
+          你想拍什麼？ <span class="required">*</span>
+          <input type="text" id="input-topic" required placeholder="產品名、概念、觀眾問題、老闆交代的任務都行" autofocus>
+          <span class="field-hint-inline">例：Alpaka 背包開箱 / 觀眾一直問防水 / 老闆說要拍新品</span>
         </label>
         <label>
-          影片目的 <span class="field-hint">這支影片要幫你達成什麼？</span>
+          主要用途 <span class="field-hint">這支影片主要幫你達成什麼？</span>
           <select id="input-job">
-            <option value="">先跳過，之後再選也可以</option>
+            <option value="">AI 自動判斷</option>
+            <option value="吸引">吸引 — 讓新觀眾認識你</option>
+            <option value="培育">培育 — 讓觀眾更了解產品</option>
+            <option value="轉換">轉換 — 讓觀眾下單購買</option>
+          </select>
+        </label>
+        <label>
+          次要用途 <span class="field-hint">這支影片順便達成的第二個目的（可選）</span>
+          <select id="input-job-secondary">
+            <option value="">無</option>
             <option value="吸引">吸引 — 讓新觀眾認識你</option>
             <option value="培育">培育 — 讓觀眾更了解產品</option>
             <option value="轉換">轉換 — 讓觀眾下單購買</option>
