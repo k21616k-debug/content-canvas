@@ -42,13 +42,14 @@ export default async function handler(req, res) {
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1200,
+      max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = msg.content[0].text.trim();
     const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
-    const result = JSON.parse(clean);
+    let result;
+    try { result = JSON.parse(clean); } catch { result = { job: clean.substring(0, 200), error: 'JSON parse failed' }; }
 
     return res.status(200).json(result);
   } catch (err) {
