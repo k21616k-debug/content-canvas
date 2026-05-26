@@ -3429,8 +3429,8 @@ function autoArrangeNodes() {
   if (nodes.length === 0) return;
 
   const cols = Math.ceil(Math.sqrt(nodes.length));
-  const gapX = 220;
-  const gapY = 170;
+  const gapX = 260;
+  const gapY = 160;
   const startX = 60;
   const startY = 60;
 

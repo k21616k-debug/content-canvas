@@ -1449,18 +1449,16 @@ kbd {
 
 /* ── Panel accordion (details/summary) ── */
 .panel-accordion {
-  margin-bottom: 4px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  overflow: hidden;
+  margin-bottom: 2px;
 }
 .panel-accordion > summary {
-  padding: 8px 12px;
+  padding: 7px 10px;
   font-size: 13px;
   font-weight: 600;
   color: #334155;
   cursor: pointer;
   background: #f8fafc;
+  border-radius: 6px;
   list-style: none;
   display: flex;
   align-items: center;
@@ -1474,6 +1472,7 @@ kbd {
   color: #94a3b8;
   transition: transform 0.15s;
   margin-right: 4px;
+  flex-shrink: 0;
 }
 .panel-accordion[open] > summary::before {
   transform: rotate(90deg);
@@ -1481,8 +1480,9 @@ kbd {
 .panel-accordion > summary:hover {
   background: #f1f5f9;
 }
-.panel-accordion[open] {
-  border-color: #cbd5e1;
+.panel-accordion[open] > summary {
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 6px;
 }
 
 /* ── Review quickWin cards ── */
