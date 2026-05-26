@@ -27,6 +27,7 @@ const state = {
   topicMode: 'free',   // 'free' | 'list'
   zoomLevel: 1,
   ghostNodes: [],       // AI-suggested placeholder nodes
+  dismissedSuggestions: new Set(), // IDs of skipped suggestions (persisted per project)
 };
 
 // ── Project Management ──
@@ -55,6 +56,7 @@ function switchProject(projectId) {
   state.hoveredNodeId = null;
   state.topicMode = 'free';
   state.zoomLevel = 1;
+  state.dismissedSuggestions = new Set();
   // Load this project's data
   loadProjectState();
 }
@@ -67,6 +69,7 @@ function loadProjectState() {
     state.currentView = data.currentView || 'topic';
     state.nodes = new Map(data.nodes || []);
     state.connections = data.connections || [];
+    state.dismissedSuggestions = new Set(data.dismissedSuggestions || []);
     for (const node of state.nodes.values()) {
       if (!node.aiResearch) node.aiResearch = null;
       if (!node.filmingAngles) node.filmingAngles = [];
@@ -120,6 +123,7 @@ function saveState() {
     currentView: state.currentView,
     nodes: [...state.nodes.entries()],
     connections: state.connections,
+    dismissedSuggestions: [...state.dismissedSuggestions],
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   saveToFile(data);
@@ -1910,7 +1914,7 @@ function analyzeCanvas() {
         const tmpl = available[i];
         const topic = tmpl.tpl(themeWord, brandNames);
         suggestions.push({
-          id: 'ghost_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
+          id: 'ghost_gap_' + stage + '_' + i,
           type: 'new-node',
           topic,
           job: tmpl.job,
@@ -1951,7 +1955,9 @@ function analyzeCanvas() {
 }
 
 async function runGlobalReview() {
-  const suggestions = analyzeCanvas();
+  const allSuggestions = analyzeCanvas();
+  // Filter out previously dismissed suggestions
+  const suggestions = allSuggestions.filter(s => !state.dismissedSuggestions.has(s.id));
   state.ghostNodes = suggestions;
   render();
   showReviewPanel(suggestions, null);
@@ -1976,8 +1982,16 @@ async function runGlobalReview() {
     if (res.ok) {
       const aiReview = await res.json();
       showReviewPanel(suggestions, aiReview);
+    } else {
+      // API returned error — remove loading indicator
+      const el = document.querySelector('.ai-review-loading');
+      if (el) el.remove();
     }
-  } catch { /* AI review unavailable, rule-based still shown */ }
+  } catch {
+    // Network error or API unavailable — remove loading indicator
+    const el = document.querySelector('.ai-review-loading');
+    if (el) el.remove();
+  }
 }
 
 function showReviewPanel(suggestions, aiReview) {
@@ -1993,10 +2007,12 @@ function showReviewPanel(suggestions, aiReview) {
   state.selectedNodeId = null;
 
   if (suggestions.length === 0) {
+    const hasSkipped = state.dismissedSuggestions.size > 0;
     $('#review-content').innerHTML = `
       <div class="review-perfect">
         <div class="review-perfect-icon">✅</div>
         <div>目前畫布結構完整，沒有明顯缺口</div>
+        ${hasSkipped ? `<button onclick="resetDismissedSuggestions()" style="margin-top:12px;padding:6px 16px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#64748b;cursor:pointer;font-size:13px">重新顯示已跳過的 ${state.dismissedSuggestions.size} 項建議</button>` : ''}
       </div>`;
     return;
   }
@@ -2249,20 +2265,32 @@ function adoptGhost(ghostId) {
 }
 
 function dismissGhost(ghostId) {
+  // Persist the dismissed ID so it won't reappear on next review
+  state.dismissedSuggestions.add(ghostId);
+  saveState();
+
   state.ghostNodes = state.ghostNodes.filter(g => g.id !== ghostId);
   const card = $(`.review-card[data-ghost-id="${ghostId}"]`);
   if (card) card.remove();
   // Update summary count
   const summary = $('.review-summary');
-  if (summary) summary.textContent = `找到 ${state.ghostNodes.length} 個建議`;
+  if (summary) summary.textContent = `找到 ${state.ghostNodes.length} 個結構建議`;
   if (state.ghostNodes.length === 0) {
+    const hasSkipped = state.dismissedSuggestions.size > 0;
     $('#review-content').innerHTML = `
       <div class="review-perfect">
         <div class="review-perfect-icon">👍</div>
         <div>所有建議已處理完畢</div>
+        ${hasSkipped ? `<button onclick="resetDismissedSuggestions()" style="margin-top:12px;padding:6px 16px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#64748b;cursor:pointer;font-size:13px">重新顯示已跳過的 ${state.dismissedSuggestions.size} 項建議</button>` : ''}
       </div>`;
   }
   render();
+}
+
+function resetDismissedSuggestions() {
+  state.dismissedSuggestions.clear();
+  saveState();
+  runGlobalReview();
 }
 
 function generateBrief() {
