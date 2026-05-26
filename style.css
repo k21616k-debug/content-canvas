@@ -1314,7 +1314,6 @@ kbd {
 }
 
 /* ── Connection handles (edge-drag) ── */
-.node-card { position: relative; }
 .conn-handle {
   position: absolute;
   width: 12px;
