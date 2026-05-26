@@ -556,6 +556,9 @@ function render() {
     area.classList.remove('list-mode');
     area.style.backgroundSize = `${24 * z}px ${24 * z}px`;
     renderTopicView(canvas);
+    // Force layout reflow so newly-appended cards have computed dimensions
+    // (offsetWidth/offsetHeight return 0 for elements added after innerHTML='')
+    void canvas.offsetHeight;
     renderConnections(svg);
     $('#btn-add').style.display = '';
   } else if (state.currentView === 'topic' && state.topicMode === 'list') {
@@ -591,6 +594,7 @@ function render() {
 }
 
 function renderTopicView(container) {
+  renderKanbanLanes(container);
   let idx = 0;
   for (const node of state.nodes.values()) {
     const el = buildNodeCard(node);
@@ -614,6 +618,23 @@ function renderTopicView(container) {
 
     container.appendChild(el);
   }
+}
+
+function renderKanbanLanes(container) {
+  container.querySelectorAll('.kanban-lane').forEach(el => el.remove());
+  const LANE_W = 360, LANE_GAP = 20;
+  const STAGES = ['A', 'B', 'C', 'D'];
+  const COLORS  = { A: '#3b82f6', B: '#10b981', C: '#f59e0b', D: '#8b5cf6' };
+  const BG      = { A: 'rgba(59,130,246,0.03)', B: 'rgba(16,185,129,0.03)', C: 'rgba(245,158,11,0.03)', D: 'rgba(139,92,246,0.03)' };
+  const LABELS  = { A: 'A 認知／吸引', B: 'B 評估／培育', C: 'C 信任／轉換', D: 'D 安心' };
+
+  STAGES.forEach((stage, i) => {
+    const lane = document.createElement('div');
+    lane.className = `kanban-lane kanban-lane-${stage}`;
+    lane.style.cssText = `left:${i * (LANE_W + LANE_GAP)}px;width:${LANE_W}px;background:${BG[stage]}`;
+    lane.innerHTML = `<div class="kanban-lane-header"><span class="lane-dot" style="background:${COLORS[stage]}"></span><span class="lane-title">${LABELS[stage]}</span></div>`;
+    container.appendChild(lane);
+  });
 }
 
 function renderTopicListView(container) {
@@ -1015,10 +1036,12 @@ function buildNodeCard(node, opts = {}) {
   const crossBadge = opts.crossBadge || '';
   const sourceHtml = opts.sourceHtml || '';
   const el = document.createElement('div');
+  const stage = node.positions?.journey?.stage;
   el.className = 'node-card'
     + (node.isMain ? ' main-node' : '')
     + (node.id === state.selectedNodeId ? ' selected' : '')
-    + (compact ? ' compact' : '');
+    + (compact ? ' compact' : '')
+    + (stage ? ` card-stage-${stage}` : '');
   el.dataset.nodeId = node.id;
 
   const jobClass = { '吸引': 'job-attract', '培育': 'job-nurture', '轉換': 'job-convert' }[node.main.job] || '';
@@ -1057,12 +1080,10 @@ function buildNodeCard(node, opts = {}) {
         ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
         <span class="readiness-dot ${readyClass}" title="準備度 ${readiness}%"></span>
       </div>
-      <div class="node-topic">${esc(node.main.topic)}</div>
+      <div class="node-topic" title="${esc(node.main.topic)}">${esc(node.main.topic)}</div>
       <div class="node-meta">
         ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span>` : '<span class="job-badge job-unset">未指定</span>'}
         ${node.main.jobSecondary ? `<span class="job-badge-secondary ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[node.main.jobSecondary] || ''}">${esc(node.main.jobSecondary)}</span>` : ''}
-        ${node.positions.journey?.stage ? `<span class="stage-badge stage-${node.positions.journey.stage}">${esc(JOURNEY_LABELS[node.positions.journey.stage])}</span>` : ''}
-        ${connCount > 0 ? `<span class="conn-count-badge">🔗 ${connCount}</span>` : ''}
         ${node.main.cta ? `<span class="cta-text">CTA: ${esc(node.main.cta)}</span>` : ''}
       </div>
     </div>
@@ -1228,52 +1249,28 @@ function renderConnections(svg) {
     const tp = tEl
       ? { x: parseFloat(tEl.style.left) || 0, y: parseFloat(tEl.style.top) || 0 }
       : toNode.positions.topic;
-    const fw = fEl ? fEl.offsetWidth  : (fromNode.isMain ? 280 : 240);
-    const tw = tEl ? tEl.offsetWidth  : (toNode.isMain   ? 280 : 240);
-    const fh = fEl ? fEl.offsetHeight : 120;
-    const th = tEl ? tEl.offsetHeight : 120;
+    const fw = fEl ? (fEl.offsetWidth  || (fromNode.isMain ? 280 : 240)) : (fromNode.isMain ? 280 : 240);
+    const tw = tEl ? (tEl.offsetWidth  || (toNode.isMain   ? 280 : 240)) : (toNode.isMain   ? 280 : 240);
+    const fh = fEl ? (fEl.offsetHeight || 90) : 120;
+    const th = tEl ? (tEl.offsetHeight || 90) : 120;
 
-    // Centre points
-    const fcx = fp.x + fw / 2, fcy = fp.y + fh / 2;
-    const tcx = tp.x + tw / 2, tcy = tp.y + th / 2;
+    // Fixed anchors: source always exits right-center, target always enters left-center
+    const x1 = fp.x + fw;
+    const y1 = fp.y + fh / 2;
+    const x2 = tp.x;
+    const y2 = tp.y + th / 2;
 
-    // Use edgePoint for side detection only — exit/entry points are placed
-    // just outside the card border for visual clarity and arrowhead space.
-    const fromPt = edgePoint(fp.x, fp.y, fw, fh, tcx, tcy);
-    const toPt   = edgePoint(tp.x, tp.y, tw, th, fcx, fcy);
-
-    // Place endpoints flush at card edges.
-    // SVG is z-index:1 (behind cards z-index:2), so any line segment
-    // inside the card is hidden — the line visually starts at the border.
-    let x1, y1, x2, y2;
-    switch (fromPt.side) {
-      case 'right':  x1 = fp.x + fw; y1 = fcy; break;
-      case 'left':   x1 = fp.x;      y1 = fcy; break;
-      case 'bottom': x1 = fcx; y1 = fp.y + fh;  break;
-      case 'top':    x1 = fcx; y1 = fp.y;        break;
-    }
-    switch (toPt.side) {
-      case 'right':  x2 = tp.x + tw; y2 = tcy; break;
-      case 'left':   x2 = tp.x;      y2 = tcy; break;
-      case 'bottom': x2 = tcx; y2 = tp.y + th;  break;
-      case 'top':    x2 = tcx; y2 = tp.y;        break;
-    }
-
-    // Orthogonal Z-step routing — pure right-angle lines
-    const fromH = fromPt.side === 'left' || fromPt.side === 'right';
-    const toH   = toPt.side === 'left'   || toPt.side === 'right';
     let d;
-
-    if (fromH && toH) {
+    if (x2 >= x1 - 8) {
+      // Forward (left→right): simple Z-elbow
       const midX = (x1 + x2) / 2;
       d = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
-    } else if (!fromH && !toH) {
-      const midY = (y1 + y2) / 2;
-      d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
-    } else if (fromH) {
-      d = `M${x1},${y1} L${x2},${y1} L${x2},${y2}`;
     } else {
-      d = `M${x1},${y1} L${x1},${y2} L${x2},${y2}`;
+      // Backward: U-turn routed above or below both cards
+      const topClear = Math.min(fp.y, tp.y) - 24;
+      const botClear = Math.max(fp.y + fh, tp.y + th) + 24;
+      const bypassY  = Math.abs(y1 - topClear) <= Math.abs(y1 - botClear) ? topClear : botClear;
+      d = `M${x1},${y1} L${x1+16},${y1} L${x1+16},${bypassY} L${x2-16},${bypassY} L${x2-16},${y2} L${x2},${y2}`;
     }
 
     // Determine if this connection should be highlighted
@@ -3430,43 +3427,89 @@ function autoArrangeNodes() {
   const nodes = [...state.nodes.values()];
   if (nodes.length === 0) return;
 
-  const canvasEl = document.getElementById('canvas-area');
-  const viewW = canvasEl ? canvasEl.clientWidth : 1000;
+  const STAGES = ['A', 'B', 'C', 'D'];
+  const LANE_W = 360, LANE_GAP = 20, LANE_PAD_X = 40;
+  const LANE_PAD_TOP = 80, CARD_H = 140, CARD_GAP_Y = 20;
 
-  const cellW = 252;  // 240px card + 12px gap
-  const cellH = 100;  // compact row height
-  const startX = 16;
-  const startY = 16;
-
-  // Dynamic columns: fit viewport width, or sqrt — whichever gives more columns (= fewer rows = less scrolling)
-  const fitCols = Math.max(3, Math.floor((viewW - startX) / cellW));
-  const sqrtCols = Math.ceil(Math.sqrt(nodes.length));
-  const cols = Math.max(fitCols, sqrtCols);
-
-  // Sort: main nodes first, then by job, then by created time
-  const sorted = nodes.sort((a, b) => {
-    if (a.isMain !== b.isMain) return b.isMain ? 1 : -1;
-    const jobOrder = { '吸引': 0, '培育': 1, '轉換': 2 };
-    const ja = jobOrder[a.main.job] ?? 3;
-    const jb = jobOrder[b.main.job] ?? 3;
-    if (ja !== jb) return ja - jb;
-    return a.createdAt - b.createdAt;
-  });
-
-  sorted.forEach((node, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    node.positions.topic = { x: startX + col * cellW, y: startY + row * cellH };
-  });
-
-  // Reset scroll to origin so arranged nodes are visible
-  if (canvasEl) {
-    canvasEl.scrollLeft = 0;
-    canvasEl.scrollTop = 0;
+  // Kahn's topological sort within a stage group (respects connection order)
+  function topoSort(group) {
+    if (group.length <= 1) return group;
+    const ids  = new Set(group.map(n => n.id));
+    const inDeg = new Map(group.map(n => [n.id, 0]));
+    const adj   = new Map(group.map(n => [n.id, []]));
+    for (const c of state.connections) {
+      if (ids.has(c.from) && ids.has(c.to)) {
+        adj.get(c.from).push(c.to);
+        inDeg.set(c.to, inDeg.get(c.to) + 1);
+      }
+    }
+    const queue  = group.filter(n => inDeg.get(n.id) === 0);
+    const result = [];
+    while (queue.length) {
+      const n = queue.shift();
+      result.push(n);
+      for (const toId of (adj.get(n.id) || [])) {
+        const d = inDeg.get(toId) - 1;
+        inDeg.set(toId, d);
+        if (d === 0) { const tn = group.find(x => x.id === toId); if (tn) queue.push(tn); }
+      }
+    }
+    for (const n of group) if (!result.includes(n)) result.push(n); // cycles
+    return result;
   }
 
+  // Group by journey stage
+  const byStage = Object.fromEntries(STAGES.map(s => [s, []]));
+  const noStage = [];
+  for (const n of nodes) {
+    const s = n.positions?.journey?.stage;
+    if (s && byStage[s]) byStage[s].push(n);
+    else noStage.push(n);
+  }
+
+  // Snapshot current DOM positions for FLIP animation
+  const oldPos = new Map();
+  for (const n of nodes) {
+    const el = document.querySelector(`.node-card[data-node-id="${n.id}"]`);
+    if (el) oldPos.set(n.id, { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 });
+  }
+
+  // Assign new positions: main nodes first within each lane, then topo order
+  for (let si = 0; si < STAGES.length; si++) {
+    const laneLeft = si * (LANE_W + LANE_GAP);
+    const sorted = topoSort(byStage[STAGES[si]]);
+    sorted.sort((a, b) => (b.isMain ? 1 : 0) - (a.isMain ? 1 : 0));
+    sorted.forEach((n, row) => {
+      n.positions.topic = { x: laneLeft + LANE_PAD_X, y: LANE_PAD_TOP + row * (CARD_H + CARD_GAP_Y) };
+    });
+  }
+  const rightX = STAGES.length * (LANE_W + LANE_GAP) + 20;
+  noStage.forEach((n, i) => {
+    n.positions.topic = { x: rightX, y: LANE_PAD_TOP + i * (CARD_H + CARD_GAP_Y) };
+  });
+
+  const canvasEl = document.getElementById('canvas-area');
+  if (canvasEl) { canvasEl.scrollLeft = 0; canvasEl.scrollTop = 0; }
   saveState();
-  render();
+  render(); // creates elements at new positions
+
+  // FLIP: teleport each card to its old position, then transition to new
+  for (const [id, op] of oldPos) {
+    const el = document.querySelector(`.node-card[data-node-id="${id}"]`);
+    if (!el) continue;
+    el.style.transition = 'none';
+    el.style.left = op.x + 'px';
+    el.style.top  = op.y + 'px';
+    el.offsetHeight; // force reflow
+    el.style.transition = 'left 0.45s ease, top 0.45s ease';
+    const n = state.nodes.get(id);
+    el.style.left = n.positions.topic.x + 'px';
+    el.style.top  = n.positions.topic.y + 'px';
+  }
+  setTimeout(() => {
+    document.querySelectorAll('.node-card').forEach(el => { el.style.transition = ''; });
+    renderConnections(document.getElementById('connections-svg'));
+  }, 480);
 }
 
 // ── Modal ──

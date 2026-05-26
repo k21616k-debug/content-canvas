@@ -255,8 +255,10 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 
 /* Node card */
 .node-card {
-  position: absolute; width: 240px;
-  background: var(--card-bg); border: 2px solid var(--card-border);
+  position: absolute; width: 280px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--card-border);
   border-radius: var(--radius-lg); box-shadow: var(--card-shadow);
   cursor: grab; user-select: none; z-index: 2;
   transition: box-shadow 0.15s, border-color 0.15s;
@@ -279,7 +281,11 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 .node-main {
   padding: 12px; border-bottom: 1px solid var(--card-border);
 }
-.node-topic { font-size: 14px; font-weight: 600; line-height: 1.3; margin-bottom: 6px; }
+.node-topic {
+  font-size: 14px; font-weight: 600; line-height: 1.3; margin-bottom: 6px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .node-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .job-badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
@@ -308,11 +314,13 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 .stage-B { background: #d1fae5; color: #065f46; }
 .stage-C { background: #fef3c7; color: #92400e; }
 .stage-D { background: #ede9fe; color: #5b21b6; }
-.conn-count-badge {
-  display: inline-block; padding: 2px 6px; border-radius: 10px;
-  font-size: 10px; font-weight: 500;
-  background: rgba(100,116,139,0.12); color: var(--text-secondary);
-}
+
+/* Stage color bar (left border) */
+.card-stage-A { border-left-color: #3b82f6; }
+.card-stage-B { border-left-color: #10b981; }
+.card-stage-C { border-left-color: #f59e0b; }
+.card-stage-D { border-left-color: #8b5cf6; }
+.conn-count-badge { display: none; }
 
 .node-user {
   padding: 8px 12px; background: var(--section-user);
@@ -1333,6 +1341,36 @@ kbd {
 .conn-handle-right { right: -6px; top: 50%; margin-top: -6px; }
 .conn-handle-bottom { bottom: -6px; left: 50%; margin-left: -6px; }
 .conn-handle-left { left: -6px; top: 50%; margin-top: -6px; }
+
+/* ── Kanban lane backgrounds ── */
+.kanban-lane {
+  position: absolute;
+  top: 0;
+  height: 3000px;
+  pointer-events: none;
+  z-index: 0;
+  border-right: 1px dashed rgba(0,0,0,0.07);
+}
+.kanban-lane-header {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.lane-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.lane-title { white-space: nowrap; }
 
 /* ── AI Transparency section ── */
 .ai-transparency-section { margin-bottom: 4px; }
