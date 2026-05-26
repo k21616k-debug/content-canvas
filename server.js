@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, createReadStream } from 'fs';
 import { createServer } from 'http';
 import { join, extname } from 'path';
 
-const PORT = 3456;
+const PORT = process.env.PORT || 3456;
 const DATA_FILE = join(import.meta.dirname, 'canvas-data.json');
 
 const MIME = {

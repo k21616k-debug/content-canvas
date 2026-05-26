@@ -1782,10 +1782,11 @@ function handleConnectClick(nodeId) {
 async function generateScript(node) {
   // Try real API first
   try {
-    const res = await fetch('/api/interview-script', {
+    const res = await fetch('/api/script', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        mode: 'interview',
         topic: node.main.topic,
         job: node.main.job,
         cta: node.main.cta,
