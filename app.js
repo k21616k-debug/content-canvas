@@ -1257,55 +1257,21 @@ function renderConnections(svg) {
       case 'top':    x2 = tcx; y2 = tp.y - 12;        break;
     }
 
-    // Orthogonal Z-step routing with rounded corners
+    // Orthogonal Z-step routing — pure right-angle lines
     const fromH = fromPt.side === 'left' || fromPt.side === 'right';
     const toH   = toPt.side === 'left'   || toPt.side === 'right';
     let d;
 
     if (fromH && toH) {
-      // Both horizontal: horizontal → vertical → horizontal
       const midX = (x1 + x2) / 2;
-      const r = Math.min(8, Math.abs(midX - x1), Math.abs(x2 - midX), Math.abs(y2 - y1) / 2);
-      if (r < 2 || Math.abs(y2 - y1) < 2) {
-        d = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
-      } else {
-        const sx = midX > x1 ? 1 : -1;
-        const sy = y2 > y1 ? 1 : -1;
-        const sx2 = x2 > midX ? 1 : -1;
-        d = `M${x1},${y1} L${midX - r*sx},${y1} Q${midX},${y1} ${midX},${y1 + r*sy} L${midX},${y2 - r*sy} Q${midX},${y2} ${midX + r*sx2},${y2} L${x2},${y2}`;
-      }
+      d = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
     } else if (!fromH && !toH) {
-      // Both vertical: vertical → horizontal → vertical
       const midY = (y1 + y2) / 2;
-      const r = Math.min(8, Math.abs(midY - y1), Math.abs(y2 - midY), Math.abs(x2 - x1) / 2);
-      if (r < 2 || Math.abs(x2 - x1) < 2) {
-        d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
-      } else {
-        const sy = midY > y1 ? 1 : -1;
-        const sx = x2 > x1 ? 1 : -1;
-        const sy2 = y2 > midY ? 1 : -1;
-        d = `M${x1},${y1} L${x1},${midY - r*sy} Q${x1},${midY} ${x1 + r*sx},${midY} L${x2 - r*sx},${midY} Q${x2},${midY} ${x2},${midY + r*sy2} L${x2},${y2}`;
-      }
+      d = `M${x1},${y1} L${x1},${midY} L${x2},${midY} L${x2},${y2}`;
     } else if (fromH) {
-      // Horizontal → Vertical: L-shape
-      const r = Math.min(8, Math.abs(x2 - x1), Math.abs(y2 - y1));
-      if (r < 2) {
-        d = `M${x1},${y1} L${x2},${y1} L${x2},${y2}`;
-      } else {
-        const sx = x2 > x1 ? 1 : -1;
-        const sy = y2 > y1 ? 1 : -1;
-        d = `M${x1},${y1} L${x2 - r*sx},${y1} Q${x2},${y1} ${x2},${y1 + r*sy} L${x2},${y2}`;
-      }
+      d = `M${x1},${y1} L${x2},${y1} L${x2},${y2}`;
     } else {
-      // Vertical → Horizontal: L-shape
-      const r = Math.min(8, Math.abs(x2 - x1), Math.abs(y2 - y1));
-      if (r < 2) {
-        d = `M${x1},${y1} L${x1},${y2} L${x2},${y2}`;
-      } else {
-        const sy = y2 > y1 ? 1 : -1;
-        const sx = x2 > x1 ? 1 : -1;
-        d = `M${x1},${y1} L${x1},${y2 - r*sy} Q${x1},${y2} ${x1 + r*sx},${y2} L${x2},${y2}`;
-      }
+      d = `M${x1},${y1} L${x1},${y2} L${x2},${y2}`;
     }
 
     // Determine if this connection should be highlighted
