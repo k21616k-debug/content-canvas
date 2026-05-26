@@ -1197,28 +1197,40 @@ function renderConnections(svg) {
     const fcx = fp.x + fw / 2, fcy = fp.y + fh / 2;
     const tcx = tp.x + tw / 2, tcy = tp.y + th / 2;
 
-    // Calculate exit/entry points on edges
+    // Calculate exit/entry points on closest edges
     let x1, y1, x2, y2;
-    if (Math.abs(tcx - fcx) > Math.abs(tcy - fcy)) {
-      if (tcx > fcx) {
-        x1 = fp.x + fw + 8;  y1 = fcy;
-        x2 = tp.x - 14;      y2 = tcy;
+    const dx = tcx - fcx, dy = tcy - fcy;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal dominant → exit/enter from left/right sides
+      if (dx > 0) {
+        x1 = fp.x + fw; y1 = fcy;
+        x2 = tp.x;      y2 = tcy;
       } else {
-        x1 = fp.x - 8;       y1 = fcy;
-        x2 = tp.x + tw + 14; y2 = tcy;
+        x1 = fp.x;      y1 = fcy;
+        x2 = tp.x + tw; y2 = tcy;
       }
     } else {
-      if (tcy > fcy) {
-        x1 = fcx; y1 = fp.y + fh + 8;
-        x2 = tcx; y2 = tp.y - 14;
+      // Vertical dominant → exit/enter from top/bottom
+      if (dy > 0) {
+        x1 = fcx; y1 = fp.y + fh;
+        x2 = tcx; y2 = tp.y;
       } else {
-        x1 = fcx; y1 = fp.y - 8;
-        x2 = tcx; y2 = tp.y + th + 14;
+        x1 = fcx; y1 = fp.y;
+        x2 = tcx; y2 = tp.y + th;
       }
     }
 
-    const midX = (x1 + x2) / 2;
-    const d = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
+    // Smooth cubic bezier with control points pulling toward the midpoint
+    const cpOffset = Math.max(40, Math.abs(x2 - x1) * 0.4, Math.abs(y2 - y1) * 0.4);
+    let cx1, cy1, cx2, cy2;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      cx1 = x1 + (dx > 0 ? cpOffset : -cpOffset); cy1 = y1;
+      cx2 = x2 + (dx > 0 ? -cpOffset : cpOffset);  cy2 = y2;
+    } else {
+      cx1 = x1; cy1 = y1 + (dy > 0 ? cpOffset : -cpOffset);
+      cx2 = x2; cy2 = y2 + (dy > 0 ? -cpOffset : cpOffset);
+    }
+    const d = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
 
     // Determine if this connection should be highlighted
     const isActive = state.selectedNodeId === conn.from || state.selectedNodeId === conn.to
@@ -1331,17 +1343,18 @@ function renderPanel() {
           <label>階段</label>
           <select id="edit-stage">${stageOptions}</select>
         </div>
-
-      <div class="detail-row">
         <div class="detail-half">
           <label>素材</label>
           <select id="edit-material">${matOptions}</select>
         </div>
-        <div class="detail-half">
-          <label>
-            <input type="checkbox" id="edit-main" ${node.isMain ? 'checked' : ''}> 主節點
-          </label>
-        </div>
+      </div>
+
+      <div class="checkbox-row">
+        <label class="checkbox-label-inline">
+          <input type="checkbox" id="edit-main" ${node.isMain ? 'checked' : ''}>
+          <span>主節點</span>
+          <span class="field-hint">— 這個系列最重要的核心影片</span>
+        </label>
       </div>
 
       <div class="detail-section">

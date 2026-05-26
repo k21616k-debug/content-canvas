@@ -437,6 +437,17 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 .detail-half select { width: 100%; }
 .detail-divider { border-top: 1px solid var(--card-border); margin: 16px 0; }
 
+/* Checkbox row in detail panel */
+.checkbox-row { margin-bottom: 12px; }
+.checkbox-label-inline {
+  display: flex !important; align-items: center; gap: 6px;
+  font-size: 13px !important; font-weight: 500 !important;
+  color: var(--text) !important; text-transform: none !important;
+  letter-spacing: normal !important; cursor: pointer;
+  white-space: nowrap;
+}
+.checkbox-label-inline .field-hint { white-space: normal; color: var(--text-muted); font-size: 11px; font-weight: 400; }
+
 /* Expand button */
 .expand-btn {
   display: block; width: 100%; margin-top: 8px;
