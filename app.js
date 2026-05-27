@@ -2368,7 +2368,7 @@ async function expandContent(topic, userNotes, job) {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.research) return data;
+      if (data.research) { refreshVersionBadge(); return data; }
     }
   } catch (e) { /* fall through to mock */ }
 
@@ -2427,7 +2427,9 @@ async function aiAsk(question, focusNodeId) {
     body: JSON.stringify({ question, context }),
   });
   if (!res.ok) throw new Error('API error');
-  return await res.json();
+  const data = await res.json();
+  refreshVersionBadge();
+  return data;
 }
 
 function executeAction(action) {
@@ -2878,6 +2880,7 @@ async function runGlobalReview() {
       const aiReview = await res.json();
       state.lastAiReview = aiReview; // Cache for adopt/dismiss
       showReviewPanel(suggestions, aiReview);
+      refreshVersionBadge();
     } else {
       // API returned error — remove loading indicator
       const el = document.querySelector('.ai-review-loading');
@@ -4385,12 +4388,25 @@ async function init() {
 }
 init();
 
-fetch('/api/version').then(r => r.json()).then(v => {
-  const el = document.getElementById('version-badge');
-  if (!el) return;
-  const date = v.time ? v.time.replace('T', ' ').substring(0, 16) + ' UTC' : '';
-  el.textContent = `${v.env} · ${v.commit}${date ? ' · ' + date : ''}`;
-  el.title = `環境: ${v.env}\nCommit: ${v.commit}\n時間: ${v.time || ''}`;
-}).catch(() => {});
+function refreshVersionBadge() {
+  Promise.all([
+    fetch('/api/version').then(r => r.json()).catch(() => null),
+    fetch('/api/usage').then(r => r.json()).catch(() => null),
+  ]).then(([v, u]) => {
+    const el = document.getElementById('version-badge');
+    if (!el) return;
+    const envLine = v ? `${v.env} · ${v.commit}` : '';
+    const usageLine = u && u.totalCalls > 0
+      ? `×${u.totalCalls} calls · ~$${u.estimatedCostUSD.toFixed(3)}`
+      : '';
+    el.innerHTML = [envLine, usageLine].filter(Boolean).join('<br>');
+    if (v) el.title = `環境: ${v.env}\nCommit: ${v.commit}\n時間: ${v.time || ''}`;
+    if (u && u.totalCalls > 0) {
+      const b = u.breakdown;
+      el.title += `\n\nAPI 用量\nexpand: ${b.expand.calls}次 (${b.expand.inputTokens+b.expand.outputTokens} tok)\nreview: ${b.review.calls}次 (${b.review.inputTokens+b.review.outputTokens} tok)\nask: ${b.ask.calls}次 (${b.ask.inputTokens+b.ask.outputTokens} tok)\n總計: $${u.estimatedCostUSD}`;
+    }
+  });
+}
+refreshVersionBadge();
 
 window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript, showProjectPicker, hideProjectPicker };

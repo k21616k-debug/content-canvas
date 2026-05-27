@@ -1757,8 +1757,10 @@ details[open] .advanced-toggle::before { transform: rotate(90deg); }
   background: rgba(255,255,255,0.85);
   border: 1px solid #e2e8f0;
   border-radius: 4px;
-  padding: 2px 7px;
+  padding: 3px 7px;
   z-index: 9999;
   pointer-events: none;
   user-select: none;
+  line-height: 1.6;
+  text-align: right;
 }

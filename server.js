@@ -5,6 +5,7 @@ import { execSync } from 'child_process';
 import expandHandler from './api/expand.js';
 import reviewHandler from './api/review.js';
 import askHandler from './api/ask.js';
+import { getUsage } from './api/_usage.js';
 
 const GIT_HASH = (() => {
   try { return execSync('git rev-parse --short HEAD', { cwd: import.meta.dirname }).toString().trim(); }
@@ -52,6 +53,13 @@ async function routeApi(handler, rawReq, rawRes) {
 }
 
 const server = createServer(async (req, res) => {
+  // Usage stats
+  if (req.method === 'GET' && req.url === '/api/usage') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getUsage()));
+    return;
+  }
+
   // Version info
   if (req.method === 'GET' && req.url === '/api/version') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

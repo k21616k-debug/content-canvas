@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
@@ -102,6 +103,7 @@ searchKeywords 規則：
       messages: [{ role: 'user', content: prompt }],
     });
 
+    addUsage('expand', msg.usage.input_tokens, msg.usage.output_tokens);
     const text = msg.content[0].text.trim();
     const s = text.indexOf('{'); const e = text.lastIndexOf('}');
     const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
