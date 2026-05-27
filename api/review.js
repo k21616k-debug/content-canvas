@@ -50,11 +50,14 @@ ${connsText}
   ],
   "issues": [
     {
-      "type": "duplicate|gap|quality|conflict|opportunity",
+      "type": "duplicate|merge|remove|gap|quality|conflict|opportunity",
       "severity": "high|medium|low",
       "title": "問題簡述（10字以內）",
       "detail": "具體說明",
       "suggestion": "具體怎麼修",
+      "targetNodeIndex": 節點編號(1-based)或null,
+      "mergeWith": 要合併的另一個節點編號(1-based)或null,
+      "mergedTopic": "合併後的建議標題（type=merge 時必填）",
       "newNode": {
         "topic": "建議新增的影片主題（要完整到可以直接拍）",
         "job": "吸引|培育|轉換",
@@ -69,7 +72,12 @@ ${connsText}
 規則：
 - quickWins 最多 3 個：「現在改一行字就能提升效果」的調整
 - issues 最多 6 個，按 severity 排序
-- 每個 issue 的 newNode 可以是 null（如果不需要新增影片）
+- issue type 使用說明：
+  - duplicate：主題高度相似但未合併，suggestion 說明差異化方向，newNode=null
+  - merge：兩支主題重疊到必須擇一或合併，必填 targetNodeIndex（保留節點）、mergeWith（刪除節點）、mergedTopic（合併後標題），newNode=null
+  - remove：某節點是其他節點的純子集、完全冗餘，必填 targetNodeIndex（要移除的節點），newNode=null
+  - gap：購買旅程某階段缺乏內容，newNode 填入具體建議標題
+  - quality/conflict/opportunity：newNode=null 或填具體建議
 - newNode 的 topic 要完整（不要「拍比較片」，要「SHOEI Z-8 vs AGV K3：通勤族安全帽怎麼選？」）
 - suggestion 要具體到可執行（不要「建議改善 CTA」，要「CTA 改成：留言告訴我你的安全帽品牌，下支影片幫你分析」）
 - strategyMap 要有時間感：第一週做什麼、第二週做什麼，不是空泛的方向

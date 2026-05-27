@@ -1637,8 +1637,9 @@ function renderPanel() {
       <div class="detail-divider"></div>
 
       <div class="detail-section">
-        <label>💬 我知道的（隨手寫）</label>
-        <textarea id="edit-user" rows="3" placeholder="材質、特色、你覺得好用的地方、價格...">${esc(node.user)}</textarea>
+        <label>📦 你知道的產品／內容知識 <span class="field-hint-inline">— AI 擴寫的原料，寫越多越準</span></label>
+        <textarea id="edit-user" rows="3" placeholder="例：600D 防潑水尼龍、16吋筆電艙、磁扣開口、台灣代理保固 2 年、比同類輕 200g...">${esc(node.user)}</textarea>
+        ${!node.user && !node.aiResearch ? `<div class="inline-node-hint inline-node-hint-warn">⚠️ 空著直接擴寫，AI 只能靠猜——先寫幾個你研究過的產品重點，擴寫結果才有根據</div>` : ''}
         <button class="expand-btn" id="btn-expand" title="根據你的筆記，用 AI 自動擴寫成影片企劃">✨ AI 擴寫企劃</button>
       </div>
 
@@ -2882,19 +2883,28 @@ function showReviewPanel(suggestions, aiReview) {
       html += `<div class="review-section-title">🤖 AI 策略分析</div>`;
       for (const issue of aiReview.issues) {
         const sevClass = issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-medium' : 'sev-low';
-        const typeEmoji = { duplicate: '🔁', gap: '🕳️', quality: '💡', conflict: '⚡', opportunity: '🎯' }[issue.type] || '📌';
+        const typeEmoji = { duplicate: '🔁', merge: '🔀', remove: '🗑️', gap: '🕳️', quality: '💡', conflict: '⚡', opportunity: '🎯' }[issue.type] || '📌';
         const newNodeHtml = issue.newNode ? `
             <div class="review-card-newnode">
               <span class="review-newnode-label">💡 建議新增：「${esc(issue.newNode.topic)}」</span>
               <span class="review-newnode-meta">${esc(issue.newNode.job)} · ${esc(issue.newNode.reason)}</span>
               <button class="ai-action-btn adopt review-create-node" data-topic="${esc(issue.newNode.topic)}" data-job="${esc(issue.newNode.job)}" data-stage="${esc(issue.newNode.stage)}">一鍵建立</button>
             </div>` : '';
+        const mergeHtml = (issue.type === 'merge' && issue.targetNodeIndex && issue.mergeWith) ? `
+            <div class="review-card-newnode">
+              <span class="review-newnode-label">🔀 合併後標題：「${esc(issue.mergedTopic || '')}」</span>
+              <button class="ai-action-btn adopt review-merge-btn" data-keep="${issue.targetNodeIndex}" data-drop="${issue.mergeWith}" data-topic="${esc(issue.mergedTopic || '')}">合併節點</button>
+            </div>` : '';
+        const removeHtml = (issue.type === 'remove' && issue.targetNodeIndex) ? `
+            <div class="review-card-newnode">
+              <button class="ai-action-btn dismiss review-remove-btn" data-idx="${issue.targetNodeIndex}">移除節點</button>
+            </div>` : '';
         html += `
           <div class="review-card review-card-ai ${sevClass}">
             <div class="review-card-topic">${typeEmoji} ${esc(issue.title)}</div>
             <div class="review-card-reason">${esc(issue.detail)}</div>
             <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
-            ${newNodeHtml}
+            ${newNodeHtml}${mergeHtml}${removeHtml}
           </div>`;
       }
     }
@@ -3081,6 +3091,44 @@ function showReviewPanel(suggestions, aiReview) {
       saveState();
       render();
       btn.textContent = '已建立 ✓';
+      btn.disabled = true;
+    });
+  });
+
+  // Review merge: keep targetNodeIndex, delete mergeWith, update topic
+  $$('.review-merge-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const allNodes = [...state.nodes.values()];
+      const keepIdx = parseInt(btn.dataset.keep, 10) - 1;
+      const dropIdx = parseInt(btn.dataset.drop, 10) - 1;
+      const newTopic = btn.dataset.topic;
+      const keepNode = allNodes[keepIdx];
+      const dropNode = allNodes[dropIdx];
+      if (!keepNode || !dropNode) return;
+      pushUndo();
+      if (newTopic) keepNode.main.topic = newTopic;
+      state.nodes.delete(dropNode.id);
+      state.connections = state.connections.filter(c => c.from !== dropNode.id && c.to !== dropNode.id);
+      saveState();
+      render();
+      btn.textContent = '已合併 ✓';
+      btn.disabled = true;
+    });
+  });
+
+  // Review remove: delete targetNodeIndex
+  $$('.review-remove-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const allNodes = [...state.nodes.values()];
+      const removeIdx = parseInt(btn.dataset.idx, 10) - 1;
+      const target = allNodes[removeIdx];
+      if (!target) return;
+      pushUndo();
+      state.nodes.delete(target.id);
+      state.connections = state.connections.filter(c => c.from !== target.id && c.to !== target.id);
+      saveState();
+      render();
+      btn.textContent = '已移除 ✓';
       btn.disabled = true;
     });
   });
