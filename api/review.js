@@ -90,7 +90,8 @@ ${connsText}
 5. 長片短片節奏
 6. 被忽略的機會點
 7. SEO 關鍵字打架
-8. 發布順序`;
+8. 發布順序
+9. 知識空洞（哪些節點既無使用者筆記、也沒做過 AI 擴寫？這些節點 AI 只能靠猜，quality issue 必報）`;
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',

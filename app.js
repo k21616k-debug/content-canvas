@@ -1317,6 +1317,7 @@ function buildNodeCard(node, opts = {}) {
       <div class="node-top-row">
         ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
         <span class="readiness-dot ${readyClass}" title="準備度 ${readiness}%"></span>
+        ${!node.user && !node.aiResearch ? '<span class="knowledge-thin-badge" title="尚無產品知識——先填「產品知識」欄再擴寫，AI 品質更好">📦?</span>' : ''}
       </div>
       <div class="node-topic" title="${esc(node.main.topic)}">${esc(node.main.topic)}</div>
       <div class="node-meta">
