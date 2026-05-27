@@ -1709,12 +1709,14 @@ function renderPanel() {
       <div class="detail-divider"></div>
       <details class="panel-accordion" open>
         <summary>🎤 建議 Hook — 3 種風格選一個</summary>
-        ${node.hooks.map((h, i) => `
-          <div class="hook-card">
+        ${node.hooks.map((h, i) => {
+          const sel = node.aiResearch?.suggestedHook === h.text;
+          return `<div class="hook-card${sel ? ' hook-selected' : ''}">
             <span class="hook-style">${esc(h.style)}</span>
             <span class="hook-text">「${esc(h.text)}」</span>
-          </div>
-        `).join('')}
+            <button class="hook-use-btn ai-action-btn adopt" data-hook-idx="${i}"${sel ? ' disabled' : ''}>${sel ? '✓ 已選用' : '選用'}</button>
+          </div>`;
+        }).join('')}
       </details>
       ` : (research?.suggestedHook ? `
       <div class="detail-divider"></div>
@@ -1777,6 +1779,7 @@ function renderPanel() {
         <div class="angle-card angle-cta">
           <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 影片結尾叫觀眾做的事</span></div>
           <div class="angle-reason">${esc(research.suggestedCta)}</div>
+          <button class="ai-action-btn adopt cta-apply-btn" id="btn-apply-cta"${node.main.cta === research.suggestedCta ? ' disabled' : ''}>${node.main.cta === research.suggestedCta ? '✓ 已套用' : '套用為我的 CTA'}</button>
         </div>` : ''}
         <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果到備註</button>
         <button class="expand-btn" id="btn-titles" style="margin-top:6px">🎬 YouTube 標題建議</button>
@@ -1972,6 +1975,28 @@ function renderPanel() {
       }
     });
 
+    // Hook selection — sets aiResearch.suggestedHook which feeds into Brief
+    $$('.hook-use-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.hookIdx, 10);
+        const h = node.hooks?.[idx];
+        if (!h || !node.aiResearch) return;
+        node.aiResearch.suggestedHook = h.text;
+        saveState();
+        renderPanel(node);
+      });
+    });
+
+    // Apply suggested CTA directly to node.main.cta
+    $('#btn-apply-cta')?.addEventListener('click', () => {
+      const cta = node.aiResearch?.suggestedCta;
+      if (!cta) return;
+      node.main.cta = cta;
+      saveState();
+      renderPanel(node);
+    });
+
     // Dismiss individual filming angles
     $$('.angle-dismiss-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -2047,12 +2072,21 @@ function renderPanel() {
       if (result?.options) {
         container.innerHTML = result.options.map((opt, i) => `
           <div class="angle-card" style="margin-top:8px">
-            <div class="angle-header"><span class="angle-num">${i + 1}</span><strong>${esc(opt.title)}</strong></div>
+            <div class="angle-header"><span class="angle-num">${i + 1}</span><strong>${esc(opt.title)}</strong><button class="ai-action-btn adopt title-apply-btn" data-title="${esc(opt.title)}" style="margin-left:auto;flex-shrink:0">用這個</button></div>
             ${opt.subtitle ? `<div class="angle-reason" style="font-size:11px;color:#94a3b8">${esc(opt.subtitle)}</div>` : ''}
             <div class="angle-reason">縮圖文字：<strong>${esc(opt.thumbnail)}</strong></div>
             <div class="angle-how">📸 ${esc(opt.thumbnailDesc)}</div>
           </div>
         `).join('');
+        container.querySelectorAll('.title-apply-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            node.main.topic = btn.dataset.title;
+            saveState();
+            render();
+            btn.textContent = '✓ 已套用'; btn.disabled = true;
+          });
+        });
       }
     });
 
@@ -2877,6 +2911,7 @@ function showReviewPanel(suggestions, aiReview) {
           <div class="review-card review-card-quickwin">
             <div class="review-card-topic">✅ ${esc(qw.action)}</div>
             <div class="review-card-reason">${esc(qw.why)}</div>
+            ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}">→ 前往節點</button>` : ''}
           </div>`;
       }
     }
@@ -3114,6 +3149,15 @@ function showReviewPanel(suggestions, aiReview) {
       render();
       btn.textContent = '已合併 ✓';
       btn.disabled = true;
+    });
+  });
+
+  // quickWin goto node
+  $$('.qw-goto-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.nodeIdx, 10) - 1;
+      const target = [...state.nodes.values()][idx];
+      if (target) selectNode(target.id);
     });
   });
 
