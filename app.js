@@ -626,14 +626,32 @@ function renderKanbanLanes(container) {
   const LANE_W = 360, LANE_GAP = 20;
   const STAGES = ['A', 'B', 'C', 'D'];
   const COLORS  = { A: '#3b82f6', B: '#10b981', C: '#f59e0b', D: '#8b5cf6' };
-  const BG      = { A: 'rgba(59,130,246,0.03)', B: 'rgba(16,185,129,0.03)', C: 'rgba(245,158,11,0.03)', D: 'rgba(139,92,246,0.03)' };
+  const BG      = { A: 'rgba(59,130,246,0.06)', B: 'rgba(16,185,129,0.06)', C: 'rgba(245,158,11,0.06)', D: 'rgba(139,92,246,0.06)' };
   const LABELS  = { A: 'A 認知／吸引', B: 'B 評估／培育', C: 'C 信任／轉換', D: 'D 安心' };
+  const HINTS   = {
+    A: '認知型影片：開箱、介紹、問題引導',
+    B: '評估型影片：規格比較、測評數據、競品對決',
+    C: '信任型影片：長期使用心得、第三方認證、用戶見證',
+    D: '安心型影片：退換政策、售後服務、滿意度回饋',
+  };
+
+  // Count nodes per stage for empty-state detection
+  const stageCount = { A: 0, B: 0, C: 0, D: 0 };
+  if (state?.nodes) {
+    for (const node of state.nodes.values()) {
+      const s = node.positions?.journey?.stage;
+      if (s && stageCount[s] !== undefined) stageCount[s]++;
+    }
+  }
 
   STAGES.forEach((stage, i) => {
     const lane = document.createElement('div');
     lane.className = `kanban-lane kanban-lane-${stage}`;
     lane.style.cssText = `left:${i * (LANE_W + LANE_GAP)}px;width:${LANE_W}px;background:${BG[stage]}`;
-    lane.innerHTML = `<div class="kanban-lane-header"><span class="lane-dot" style="background:${COLORS[stage]}"></span><span class="lane-title">${LABELS[stage]}</span></div>`;
+    const emptyHint = stageCount[stage] === 0
+      ? `<div class="lane-empty-hint"><span class="lane-empty-icon">＋</span><span>${HINTS[stage]}</span></div>`
+      : '';
+    lane.innerHTML = `<div class="kanban-lane-header"><span class="lane-dot" style="background:${COLORS[stage]}"></span><span class="lane-title">${LABELS[stage]}</span></div>${emptyHint}`;
     container.appendChild(lane);
   });
 }
@@ -1270,7 +1288,10 @@ function renderConnections(svg) {
       // Backward: U-turn routed above or below both cards
       const topClear = Math.min(fp.y, tp.y) - 24;
       const botClear = Math.max(fp.y + fh, tp.y + th) + 24;
-      const bypassY  = Math.abs(y1 - topClear) <= Math.abs(y1 - botClear) ? topClear : botClear;
+      // Only route above if topClear stays clear of the lane header (LANE_PAD_TOP=80)
+      const safeTop = topClear >= 76;
+      const bypassY = (safeTop && Math.abs(y1 - topClear) <= Math.abs(y1 - botClear))
+        ? topClear : botClear;
       d = `M${x1},${y1} L${x1+16},${y1} L${x1+16},${bypassY} L${x2-16},${bypassY} L${x2-16},${y2} L${x2},${y2}`;
     }
 
@@ -1281,7 +1302,7 @@ function renderConnections(svg) {
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.dataset.from = conn.from;
     g.dataset.to = conn.to;
-    g.style.opacity = isActive ? '1' : '0.12';
+    g.style.opacity = isActive ? '1' : '0.45';
     g.style.transition = 'opacity 0.2s';
 
     const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -1317,7 +1338,7 @@ function highlightConnections(nodeId) {
   const groups = svg.querySelectorAll('g[data-from]');
   groups.forEach(g => {
     const active = nodeId && (g.dataset.from === nodeId || g.dataset.to === nodeId);
-    g.style.opacity = active ? '1' : '0.12';
+    g.style.opacity = active ? '1' : '0.45';
     const p = g.querySelector('path[stroke]:not([stroke="transparent"])');
     if (p) {
       p.setAttribute('stroke', active ? '#3b82f6' : '#64748b');
@@ -3694,6 +3715,27 @@ function bindEvents() {
   $('#zoom-reset').addEventListener('click', () => {
     state.zoomLevel = 1;
     render();
+  });
+  $('#zoom-fit').addEventListener('click', () => {
+    const cards = document.querySelectorAll('.node-card');
+    if (!cards.length) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    cards.forEach(c => {
+      const x = parseFloat(c.style.left) || 0;
+      const y = parseFloat(c.style.top) || 0;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + (c.offsetWidth || 280));
+      maxY = Math.max(maxY, y + (c.offsetHeight || 140));
+    });
+    const area = $('#canvas-area');
+    const pad = 60;
+    const scaleX = (area.clientWidth - pad * 2) / (maxX - minX || 1);
+    const scaleY = (area.clientHeight - pad * 2) / (maxY - minY || 1);
+    state.zoomLevel = Math.min(2, Math.max(0.3, Math.min(scaleX, scaleY)));
+    render();
+    area.scrollLeft = (minX * state.zoomLevel) - pad;
+    area.scrollTop  = (minY * state.zoomLevel) - pad;
   });
 
   // Mouse wheel zoom in free mode
