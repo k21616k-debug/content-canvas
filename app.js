@@ -599,7 +599,7 @@ function nodeReadiness(node) {
   if (node.positions?.material?.column) score += 5;
   if (node.user && node.user.length > 20) score += 15;
   if (node.aiResearch) score += 15;
-  if (node.filmingAngles?.length > 0) score += 10;
+  if (node.filmingAngles?.some(a => a.confirmed !== false)) score += 10;
   return Math.min(score, 100);
 }
 
@@ -1705,6 +1705,27 @@ function renderPanel() {
       </details>
       ` : ''}
 
+      ${(research || angles.length > 0) ? (() => {
+        const hookOk = !!node.aiResearch?.suggestedHook;
+        const ctaOk = !!node.main.cta;
+        const confirmedShots = angles.filter(a => a.confirmed !== false).length;
+        const shotsOk = confirmedShots > 0;
+        const doneCount = [hookOk, ctaOk, shotsOk].filter(Boolean).length;
+        const pct = Math.round(doneCount / 3 * 100);
+        return `
+      <div class="detail-divider"></div>
+      <div class="prod-readiness-bar">
+        <div class="prod-readiness-title">🎬 製作準備</div>
+        <div class="prod-readiness-items">
+          <span class="prod-item${hookOk ? ' prod-ok' : ' prod-todo'}">${hookOk ? '✅' : '⬜'} Hook</span>
+          <span class="prod-item${ctaOk ? ' prod-ok' : ' prod-todo'}">${ctaOk ? '✅' : '⬜'} CTA</span>
+          <span class="prod-item${shotsOk ? ' prod-ok' : ' prod-todo'}">${shotsOk ? '✅' : '⬜'} 拍攝 ${confirmedShots}/${angles.length}</span>
+        </div>
+        <div class="prod-readiness-track"><div class="prod-readiness-fill" style="width:${pct}%"></div></div>
+        ${doneCount === 3 ? `<div class="prod-ready-msg">🎉 準備完成，可以拍了！</div>` : `<div class="prod-ready-hint">勾選拍攝清單、選定 Hook、設定 CTA 後即可生成 Brief</div>`}
+      </div>`;
+      })() : ''}
+
       ${(node.hooks?.length > 0) ? `
       <div class="detail-divider"></div>
       <details class="panel-accordion" open>
@@ -1728,23 +1749,31 @@ function renderPanel() {
       </details>
       ` : '')}
 
-      ${angles.length > 0 ? `
+      ${angles.length > 0 ? (() => {
+        const confirmedCount = angles.filter(a => a.confirmed !== false).length;
+        const summaryLabel = confirmedCount > 0
+          ? `🎬 拍攝清單 — ${confirmedCount}/${angles.length} 已確認`
+          : `🎬 建議拍攝方向 (${angles.length}) — 勾選要拍的`;
+        return `
       <div class="detail-divider"></div>
       <details class="panel-accordion" open>
-        <summary>🎬 建議拍攝方向 (${angles.length})</summary>
-        ${angles.map((a, i) => `
-          <div class="angle-card">
+        <summary>${summaryLabel}</summary>
+        ${angles.map((a, i) => {
+          const isConfirmed = a.confirmed !== false;
+          return `<div class="angle-card${isConfirmed ? ' angle-confirmed' : ''}">
             <div class="angle-header">
-              <span class="angle-num">${i + 1}</span>
+              <label class="angle-check-label" title="${isConfirmed ? '取消確認' : '確認要拍這個'}">
+                <input type="checkbox" class="angle-confirm-chk" data-angle-idx="${i}"${isConfirmed ? ' checked' : ''}>
+              </label>
               <strong>${esc(a.title)}</strong>
-              <button class="angle-dismiss-btn" data-angle-idx="${i}" title="移除此建議">✕</button>
+              <button class="angle-dismiss-btn" data-angle-idx="${i}" title="移除">✕</button>
             </div>
             <div class="angle-reason">→ 觀眾在意：${esc(a.why)}</div>
-            ${a.howToShoot ? `<div class="angle-how">💡 ${esc(a.howToShoot)}</div>` : ''}
-          </div>
-        `).join('')}
-      </details>
-      ` : ''}
+            ${isConfirmed && a.howToShoot ? `<div class="angle-how">💡 ${esc(a.howToShoot)}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </details>`;
+      })() : ''}
 
       ${(node.detailShots?.length > 0) ? `
       <div class="detail-divider"></div>
@@ -1958,7 +1987,7 @@ function renderPanel() {
         const result = await expandContent(topic, userText, node.main.job);
         if (result) {
           node.aiResearch = result.research;
-          node.filmingAngles = result.angles || [];
+          node.filmingAngles = (result.angles || []).map(a => ({ ...a, confirmed: false }));
           node.detailShots = result.detailShots || [];
           node.hooks = result.hooks || [];
           node.aiInputType = result.inputType || '';
@@ -1995,6 +2024,19 @@ function renderPanel() {
       node.main.cta = cta;
       saveState();
       renderPanel(node);
+    });
+
+    // Confirm/unconfirm filming angles
+    $$('.angle-confirm-chk').forEach(chk => {
+      chk.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(chk.dataset.angleIdx, 10);
+        if (node.filmingAngles?.[idx] != null) {
+          node.filmingAngles[idx].confirmed = chk.checked;
+          saveState();
+          renderPanel(node);
+        }
+      });
     });
 
     // Dismiss individual filming angles
@@ -3410,7 +3452,9 @@ function generateNodeBrief(nodeId) {
   const stageLabel = stage ? JOURNEY_LABELS[stage] : '未分配';
   const stageDesc = stage ? JOURNEY_DESC[stage] : '';
   const r = node.aiResearch;
-  const hasAngles = node.filmingAngles?.length > 0;
+  const allAngles = node.filmingAngles || [];
+  const confirmedAngles = allAngles.filter(a => a.confirmed !== false);
+  const hasAngles = allAngles.length > 0;
   const hasScript = !!node.scriptDraft;
 
   // Promo tie-in
@@ -3418,83 +3462,118 @@ function generateNodeBrief(nodeId) {
   const allNodes = [...state.nodes.values()];
   const promoNodes = allNodes.filter(n => n.id !== nodeId && promoPatterns.test(n.main.topic));
 
-  let html = `<div class="brief-node-header">${esc(node.main.topic)}</div>`;
-  html += `<div class="brief-meta">${esc(matLabel)} ｜ ${esc(stageLabel)} ｜ ${node.isMain ? '★ 主節點' : '支線'}</div>`;
-
-  // ── 01 影片目的 ──
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">01 影片目的</div>
-    <div class="brief-field-value">${node.main.job ? esc(node.main.job + ' — ' + (JOB_DESC[node.main.job] || '')) : '⚠️ 未指定'}</div>
-  </div>`;
-
-  // ── 02 目標人物 Person ──
+  // Variables reused by AI polish call below
   let personText = '';
   if (r?.audienceCares) personText += r.audienceCares;
   if (stageDesc) personText += (personText ? '\n' : '') + '購買階段：' + stageLabel + ' — ' + stageDesc;
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">02 目標人物 Person</div>
-    <div class="brief-field-value">${personText ? esc(personText) : '<span class="brief-empty">按「✨ AI 擴寫企劃」後自動填入</span>'}</div>
-  </div>`;
-
-  // ── 03 核心訊息 Core Message ──
-  let coreMsg = '';
-  if (r?.suggestedHook) coreMsg += r.suggestedHook;
+  let coreMsg = r?.suggestedHook || '';
   if (r?.positioning) coreMsg += (coreMsg ? '\n\n' : '') + '定位：' + r.positioning;
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">03 核心訊息 Core Message</div>
-    <div class="brief-field-value">${coreMsg ? esc(coreMsg) : '<span class="brief-empty">按「✨ AI 擴寫企劃」後自動填入</span>'}</div>
+  let nonNeg = confirmedAngles.map((a, i) =>
+    `${i + 1}. ${a.title}\n   為什麼：${a.why}\n   拍法：${a.howToShoot || '待定'}`
+  ).join('\n\n');
+  if (r?.features) nonNeg += (nonNeg ? '\n\n' : '') + '產品特色：' + r.features;
+  let framework = linked.map(l => `${l.dir} ${l.topic}`).join('\n');
+  const ctaText = node.main.cta || r?.suggestedCta || '';
+
+  let html = `<div class="brief-node-header">${esc(node.main.topic)}</div>`;
+  html += `<div class="brief-meta">${esc(matLabel)} ｜ ${esc(stageLabel)} ｜ ${node.isMain ? '★ 主節點' : '支線'}</div>`;
+
+  // ── 🎬 製作執行清單（拍攝當天帶這個）──
+  const hookLine = r?.suggestedHook
+    ? `<div class="brief-exec-hook">「${esc(r.suggestedHook)}」</div>`
+    : `<div class="brief-exec-missing">⚠️ 還沒選定 Hook — 回節點面板選一個</div>`;
+
+  const shotListHtml = confirmedAngles.length > 0
+    ? confirmedAngles.map((a, i) => `
+        <div class="brief-shot-item">
+          <label class="brief-shot-check"><input type="checkbox"> <strong>${i + 1}. ${esc(a.title)}</strong></label>
+          ${a.howToShoot ? `<div class="brief-shot-how">📷 ${esc(a.howToShoot)}</div>` : ''}
+        </div>`).join('')
+    : `<div class="brief-exec-missing">⚠️ 還沒確認拍攝清單 — 回節點面板勾選要拍的鏡頭</div>`;
+
+  const detailsHtml = node.detailShots?.length > 0
+    ? node.detailShots.map(d => `
+        <div class="brief-shot-item">
+          <label class="brief-shot-check"><input type="checkbox"> <strong>${esc(d.what)}</strong></label>
+          <div class="brief-shot-how">→ ${esc(d.why)}</div>
+        </div>`).join('')
+    : '';
+
+  const keyPointsHtml = r?.audienceCares
+    ? r.audienceCares.split(/[，。\n]/).filter(s => s.trim().length > 4).slice(0, 3)
+        .map(p => `<li>${esc(p.trim())}</li>`).join('')
+    : '';
+
+  const totalShots = confirmedAngles.length + (node.detailShots?.length || 0);
+  const estHours = totalShots <= 5 ? '1-2' : totalShots <= 10 ? '2-3' : '3-4';
+
+  html += `
+  <div class="brief-exec-section">
+    <div class="brief-exec-title">🎬 拍攝執行清單</div>
+
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">開場 Hook（前 5 秒）</div>
+      ${hookLine}
+    </div>
+
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">鏡頭清單（${confirmedAngles.length} 個已確認）</div>
+      ${shotListHtml}
+    </div>
+
+    ${detailsHtml ? `
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">產品特寫（${node.detailShots.length} 個）</div>
+      ${detailsHtml}
+    </div>` : ''}
+
+    ${keyPointsHtml ? `
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">影片中要提到的核心賣點</div>
+      <ul class="brief-keypoints">${keyPointsHtml}</ul>
+    </div>` : ''}
+
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">片尾 CTA（口播這句）</div>
+      ${ctaText ? `<div class="brief-exec-cta">「${esc(ctaText)}」</div>` : `<div class="brief-exec-missing">⚠️ 還沒設定 CTA</div>`}
+    </div>
+
+    ${promoNodes.length > 0 ? `
+    <div class="brief-exec-block">
+      <div class="brief-exec-label">🔴 搭配活動（必須口播）</div>
+      <div class="brief-exec-cta">${esc(promoNodes.map(p => p.main.topic).join('、'))}</div>
+    </div>` : ''}
+
+    <div class="brief-exec-footer">預估拍攝：${totalShots} 個鏡頭，約 ${estHours} 小時</div>
   </div>`;
 
-  // ── 04 必留元素 Non-Negotiables ──
-  let nonNeg = '';
-  if (hasAngles) {
-    nonNeg = node.filmingAngles.map((a, i) =>
-      `${i + 1}. ${a.title}\n   為什麼：${a.why}\n   拍法：${a.howToShoot || '待定'}`
-    ).join('\n\n');
-  }
-  if (r?.features) nonNeg += (nonNeg ? '\n\n' : '') + '產品特色（不可刪）：' + r.features;
-  if (r?.competitors) nonNeg += '\n競品參照：' + r.competitors;
-  // Promo tie-in as non-negotiable
-  if (promoNodes.length > 0) {
-    nonNeg += '\n\n🔴 搭配活動（必須口播）：' + promoNodes.map(p => p.main.topic).join('、');
-  }
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">04 必留元素 Non-Negotiables</div>
-    <div class="brief-field-value">${nonNeg ? esc(nonNeg) : '<span class="brief-empty">按「✨ AI 擴寫企劃」後自動填入</span>'}</div>
-  </div>`;
-
-  // ── 05 短片潛力點 Short Clip Moments ──
-  let shortClips = '';
-  if (hasAngles) {
-    shortClips = node.filmingAngles
-      .filter(a => a.title.includes('實測') || a.title.includes('對比') || a.title.includes('測試') || a.title.includes('vs'))
-      .map(a => `• ${a.title}（可獨立為 60 秒短片）`)
-      .join('\n');
-  }
-  if (!shortClips && hasAngles) {
-    shortClips = '（拍完後由片師標記時間戳，此欄留白）';
-  }
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">05 短片潛力點 Short Clip Moments</div>
-    <div class="brief-field-value">${shortClips ? esc(shortClips) : '<span class="brief-empty">拍攝完成後補填</span>'}</div>
-  </div>`;
-
-  // ── 06 框架連結 Framework Link ──
-  let framework = '';
-  if (linked.length > 0) {
-    framework = linked.map(l => `${l.dir} ${l.topic}`).join('\n');
-  }
-  html += `<div class="brief-field brief-field-numbered">
-    <div class="brief-field-label">06 框架連結 Framework Link</div>
-    <div class="brief-field-value">${framework ? esc(framework) : '<span class="brief-empty">無關聯節點</span>'}</div>
-  </div>`;
-
-  // ── CTA ──
-  const ctaText = node.main.cta || (r?.suggestedCta) || '';
-  html += `<div class="brief-field">
-    <div class="brief-field-label">CTA（觀眾看完要做什麼）</div>
-    <div class="brief-field-value brief-cta">${ctaText ? esc(ctaText) : '⚠️ 未設定'}</div>
-  </div>`;
+  // ── 策略背景（參考用）──
+  html += `<details class="brief-strategy-details">
+    <summary>📋 策略背景（參考）</summary>
+    <div class="brief-field brief-field-numbered">
+      <div class="brief-field-label">影片目的</div>
+      <div class="brief-field-value">${node.main.job ? esc(node.main.job + ' — ' + (JOB_DESC[node.main.job] || '')) : '⚠️ 未指定'}</div>
+    </div>
+    <div class="brief-field brief-field-numbered">
+      <div class="brief-field-label">目標觀眾</div>
+      <div class="brief-field-value">${personText ? esc(personText) : '<span class="brief-empty">AI 擴寫後自動填入</span>'}</div>
+    </div>
+    ${r?.competitors ? `
+    <div class="brief-field brief-field-numbered">
+      <div class="brief-field-label">競品參照</div>
+      <div class="brief-field-value">${esc(r.competitors)}</div>
+    </div>` : ''}
+    ${framework ? `
+    <div class="brief-field brief-field-numbered">
+      <div class="brief-field-label">連結影片</div>
+      <div class="brief-field-value">${esc(framework)}</div>
+    </div>` : ''}
+    ${r?.searchKeywords ? `
+    <div class="brief-field brief-field-numbered">
+      <div class="brief-field-label">搜尋關鍵字</div>
+      <div class="brief-field-value">${esc(r.searchKeywords)}</div>
+    </div>` : ''}
+  </details>`;
 
   // ── 製作備註 ──
   if (node.user) {
