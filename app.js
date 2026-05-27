@@ -1317,7 +1317,7 @@ function buildNodeCard(node, opts = {}) {
       <div class="node-top-row">
         ${node.isMain ? '<span class="main-badge">主節點</span>' : ''}
         <span class="readiness-dot ${readyClass}" title="準備度 ${readiness}%"></span>
-        ${!node.user && !node.aiResearch ? '<span class="knowledge-thin-badge" title="尚無產品知識——先填「產品知識」欄再擴寫，AI 品質更好">📦?</span>' : ''}
+        ${!node.user && !node.aiResearch ? '<span class="knowledge-thin-badge" title="尚無產品知識——先填「產品／內容知識」欄再擴寫，AI 品質更好">📦?</span>' : ''}
       </div>
       <div class="node-topic" title="${esc(node.main.topic)}">${esc(node.main.topic)}</div>
       <div class="node-meta">
@@ -1332,7 +1332,7 @@ function buildNodeCard(node, opts = {}) {
     </div>` : ''}
     ${node.aiSuggest.length > 0 ? `
     <div class="node-ai">
-      <div class="node-ai-label">AI SUGGEST</div>
+      <div class="node-ai-label">AI 建議</div>
       <div class="ai-suggestion">
         ${node.aiSuggest.map((s, i) => `<div class="chip"><span class="chip-text">${esc(s)}</span><button class="ai-action-btn adopt" data-idx="${i}" title="採用">採用</button><button class="ai-action-btn dismiss" data-idx="${i}" title="移除">✕</button></div>`).join('')}
       </div>
@@ -1752,8 +1752,8 @@ function renderPanel() {
       ${angles.length > 0 ? (() => {
         const confirmedCount = angles.filter(a => a.confirmed !== false).length;
         const summaryLabel = confirmedCount > 0
-          ? `🎬 拍攝清單 — ${confirmedCount}/${angles.length} 已確認`
-          : `🎬 建議拍攝方向 (${angles.length}) — 勾選要拍的`;
+          ? `🎬 拍攝規劃 — 已選 ${confirmedCount}/${angles.length} 個鏡頭`
+          : `🎬 拍攝規劃 — 從 ${angles.length} 個方向勾選要拍的`;
         return `
       <div class="detail-divider"></div>
       <details class="panel-accordion" open>
@@ -1762,7 +1762,7 @@ function renderPanel() {
           const isConfirmed = a.confirmed !== false;
           return `<div class="angle-card${isConfirmed ? ' angle-confirmed' : ''}">
             <div class="angle-header">
-              <label class="angle-check-label" title="${isConfirmed ? '取消確認' : '確認要拍這個'}">
+              <label class="angle-check-label" title="${isConfirmed ? '移出拍攝清單' : '選入拍攝清單（Brief 會列出）'}">
                 <input type="checkbox" class="angle-confirm-chk" data-angle-idx="${i}"${isConfirmed ? ' checked' : ''}>
               </label>
               <strong>${esc(a.title)}</strong>
@@ -1979,6 +1979,16 @@ function renderPanel() {
       node.main.job = $('#edit-job').value;
       node.main.cta = $('#edit-cta').value;
       saveState();
+
+      // Warn if re-expand will overwrite confirmed work
+      const _confirmedCount = (node.filmingAngles || []).filter(a => a.confirmed !== false).length;
+      const _hasHook = !!node.aiResearch?.suggestedHook;
+      if (_confirmedCount > 0 || _hasHook) {
+        const _items = [];
+        if (_hasHook) _items.push('已選定的 Hook');
+        if (_confirmedCount > 0) _items.push(`${_confirmedCount} 個已確認的拍攝鏡頭`);
+        if (!confirm(`重新擴寫會覆蓋${_items.join('和')}，確定繼續？`)) return;
+      }
 
       btn.textContent = '🔄 查詢中...';
       btn.disabled = true;
@@ -2337,6 +2347,13 @@ async function suggestCausalNode(fromId, toId) {
   const toNode = state.nodes.get(toId);
   if (!fromNode || !toNode) return;
 
+  // Guard: skip if a causal ghost already exists for this connection pair
+  const alreadyExists = state.ghostNodes.some(g =>
+    g.id.startsWith('ghost_causal_') && g.connectTo === toId &&
+    g.reason?.includes(fromNode.main.topic)
+  );
+  if (alreadyExists) return;
+
   try {
     const result = await aiAsk(
       `我剛把「${fromNode.main.topic}」和「${toNode.main.topic}」連在一起。根據這兩支影片的關聯，建議下一支可以延伸的影片主題是什麼？同時告訴我 End Screen 怎麼互相推薦。請用 new-node action 建議一個新節點。`,
@@ -2586,13 +2603,25 @@ async function aiClassifyNode(node) {
       return;
     }
 
-    if (data.primaryJob && !node.main.job) node.main.job = data.primaryJob;
-    if (data.secondaryJob && !node.main.jobSecondary) node.main.jobSecondary = data.secondaryJob;
-    if (data.cta && !node.main.cta) node.main.cta = data.cta;
-    if (data.stage) node.positions.journey = { ...node.positions.journey, stage: data.stage };
+    const updated = [];
+    if (data.primaryJob && !node.main.job) { node.main.job = data.primaryJob; updated.push(data.primaryJob); }
+    if (data.secondaryJob && !node.main.jobSecondary) { node.main.jobSecondary = data.secondaryJob; updated.push(data.secondaryJob); }
+    if (data.cta && !node.main.cta) { node.main.cta = data.cta; updated.push('CTA'); }
+    if (data.stage) { node.positions.journey = { ...node.positions.journey, stage: data.stage }; updated.push(data.stage); }
+    if (updated.length === 0) return;
     saveState();
     render();
     if (state.selectedNodeId === node.id) renderPanel(node.id);
+    // Show inline toast on the node card
+    const cardEl = document.querySelector(`.node-card[data-node-id="${node.id}"]`);
+    if (cardEl) {
+      const toast = document.createElement('div');
+      toast.style.cssText = 'position:absolute;bottom:4px;right:4px;background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;pointer-events:none;z-index:10;opacity:1;transition:opacity 0.4s';
+      toast.textContent = `✦ 已自動分類：${updated.join('・')}`;
+      cardEl.style.position = 'relative';
+      cardEl.appendChild(toast);
+      setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 400); }, 2500);
+    }
   } catch { /* silent fail */ }
 }
 
@@ -2881,6 +2910,8 @@ async function runGlobalReview() {
       stage: n.positions.journey?.stage, isMain: n.isMain,
       hook: n.aiResearch?.suggestedHook || '',
       angles: (n.filmingAngles || []).map(a => a.title).join('、'),
+      hasUserNotes: !!(n.user && n.user.trim()),
+      hasResearch: !!n.aiResearch,
     }));
     const connections = state.connections.map(c => ({
       fromTopic: state.nodes.get(c.from)?.main.topic || '?',
@@ -2941,10 +2972,16 @@ function showReviewPanel(suggestions, aiReview) {
 
   // AI-powered review section
   if (aiReview) {
+    const _rNodes = [...state.nodes.values()]; // snapshot for stable ID lookup
+    const _rTime = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
     const scoreColor = aiReview.overallScore >= 7 ? '#22c55e' : aiReview.overallScore >= 4 ? '#f59e0b' : '#ef4444';
     html += `<div class="ai-review-header">
       <div class="ai-review-score" style="border-color:${scoreColor};color:${scoreColor}">${aiReview.overallScore}/10</div>
       <div class="ai-review-summary">${esc(aiReview.summary || '')}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:4px;display:flex;align-items:center;gap:8px">
+        <span>分析時間：${_rTime}</span>
+        <button id="btn-review-refresh" style="font-size:11px;padding:2px 8px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#64748b;cursor:pointer">重新分析</button>
+      </div>
     </div>`;
     if (aiReview.quickWins && aiReview.quickWins.length > 0) {
       html += `<div class="review-section-title">⚡ 馬上可以做</div>`;
@@ -2953,7 +2990,7 @@ function showReviewPanel(suggestions, aiReview) {
           <div class="review-card review-card-quickwin">
             <div class="review-card-topic">✅ ${esc(qw.action)}</div>
             <div class="review-card-reason">${esc(qw.why)}</div>
-            ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}">→ 前往節點</button>` : ''}
+            ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}" data-node-id="${_rNodes[qw.targetNodeIndex - 1]?.id || ''}">→ 前往節點</button>` : ''}
           </div>`;
       }
     }
@@ -2968,14 +3005,22 @@ function showReviewPanel(suggestions, aiReview) {
               <span class="review-newnode-meta">${esc(issue.newNode.job)} · ${esc(issue.newNode.reason)}</span>
               <button class="ai-action-btn adopt review-create-node" data-topic="${esc(issue.newNode.topic)}" data-job="${esc(issue.newNode.job)}" data-stage="${esc(issue.newNode.stage)}">一鍵建立</button>
             </div>` : '';
+        const _mergeKeepNode = _rNodes[(issue.targetNodeIndex || 1) - 1];
+        const _mergeDropNode = _rNodes[(issue.mergeWith || 1) - 1];
         const mergeHtml = (issue.type === 'merge' && issue.targetNodeIndex && issue.mergeWith) ? `
             <div class="review-card-newnode">
               <span class="review-newnode-label">🔀 合併後標題：「${esc(issue.mergedTopic || '')}」</span>
-              <button class="ai-action-btn adopt review-merge-btn" data-keep="${issue.targetNodeIndex}" data-drop="${issue.mergeWith}" data-topic="${esc(issue.mergedTopic || '')}">合併節點</button>
+              <span class="review-newnode-meta" style="font-size:11px;color:#94a3b8">刪除「${esc(_mergeDropNode?.main?.topic || '')}」，保留「${esc(_mergeKeepNode?.main?.topic || '')}」</span>
+              <button class="ai-action-btn adopt review-merge-btn"
+                data-keep="${issue.targetNodeIndex}" data-drop="${issue.mergeWith}"
+                data-keep-id="${_mergeKeepNode?.id || ''}" data-drop-id="${_mergeDropNode?.id || ''}"
+                data-topic="${esc(issue.mergedTopic || '')}">合併節點</button>
             </div>` : '';
+        const _removeNode = _rNodes[(issue.targetNodeIndex || 1) - 1];
         const removeHtml = (issue.type === 'remove' && issue.targetNodeIndex) ? `
             <div class="review-card-newnode">
-              <button class="ai-action-btn dismiss review-remove-btn" data-idx="${issue.targetNodeIndex}">移除節點</button>
+              <span class="review-newnode-meta" style="font-size:11px;color:#94a3b8">移除節點：「${esc(_removeNode?.main?.topic || '')}」</span>
+              <button class="ai-action-btn dismiss review-remove-btn" data-idx="${issue.targetNodeIndex}" data-remove-id="${_removeNode?.id || ''}">移除節點</button>
             </div>` : '';
         html += `
           <div class="review-card review-card-ai ${sevClass}">
@@ -3148,6 +3193,12 @@ function showReviewPanel(suggestions, aiReview) {
     if (e.key === 'Enter') $('#ask-global-btn')?.click();
   });
 
+  // Refresh AI review (force re-run API)
+  $('#btn-review-refresh')?.addEventListener('click', () => {
+    state.lastAiReview = null;
+    runGlobalReview();
+  });
+
   // Bind adopt/dismiss
   $$('.ghost-adopt').forEach(btn => {
     btn.addEventListener('click', () => adoptGhost(btn.dataset.ghostId));
@@ -3173,16 +3224,18 @@ function showReviewPanel(suggestions, aiReview) {
     });
   });
 
-  // Review merge: keep targetNodeIndex, delete mergeWith, update topic
+  // Review merge: use stable IDs; fall back to indices only if IDs are missing
   $$('.review-merge-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const allNodes = [...state.nodes.values()];
-      const keepIdx = parseInt(btn.dataset.keep, 10) - 1;
-      const dropIdx = parseInt(btn.dataset.drop, 10) - 1;
+      const keepId = btn.dataset.keepId;
+      const dropId = btn.dataset.dropId;
       const newTopic = btn.dataset.topic;
-      const keepNode = allNodes[keepIdx];
-      const dropNode = allNodes[dropIdx];
-      if (!keepNode || !dropNode) return;
+      const allNodes = [...state.nodes.values()];
+      const keepNode = keepId ? state.nodes.get(keepId) : allNodes[parseInt(btn.dataset.keep, 10) - 1];
+      const dropNode = dropId ? state.nodes.get(dropId) : allNodes[parseInt(btn.dataset.drop, 10) - 1];
+      if (!keepNode || !dropNode) { alert('找不到節點，可能已被刪除，請重新執行 AI 分析'); return; }
+      const confirmed = confirm(`確定合併？\n\n保留：「${keepNode.main.topic}」\n刪除：「${dropNode.main.topic}」\n合併後標題：「${newTopic || keepNode.main.topic}」`);
+      if (!confirmed) return;
       pushUndo();
       if (newTopic) keepNode.main.topic = newTopic;
       state.nodes.delete(dropNode.id);
@@ -3194,22 +3247,26 @@ function showReviewPanel(suggestions, aiReview) {
     });
   });
 
-  // quickWin goto node
+  // quickWin goto node: use stable ID; fall back to index
   $$('.qw-goto-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.nodeIdx, 10) - 1;
-      const target = [...state.nodes.values()][idx];
-      if (target) selectNode(target.id);
+      const nodeId = btn.dataset.nodeId;
+      const target = nodeId ? state.nodes.get(nodeId) : [...state.nodes.values()][parseInt(btn.dataset.nodeIdx, 10) - 1];
+      if (!target) { alert('找不到節點，可能已被刪除，請重新執行 AI 分析'); return; }
+      selectNode(target.id);
+      document.getElementById('panel-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 
-  // Review remove: delete targetNodeIndex
+  // Review remove: use stable ID; fall back to index
   $$('.review-remove-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      const removeId = btn.dataset.removeId;
       const allNodes = [...state.nodes.values()];
-      const removeIdx = parseInt(btn.dataset.idx, 10) - 1;
-      const target = allNodes[removeIdx];
-      if (!target) return;
+      const target = removeId ? state.nodes.get(removeId) : allNodes[parseInt(btn.dataset.idx, 10) - 1];
+      if (!target) { alert('找不到節點，可能已被刪除，請重新執行 AI 分析'); return; }
+      const confirmed = confirm(`確定移除節點「${target.main.topic}」？此操作可復原（Ctrl+Z）`);
+      if (!confirmed) return;
       pushUndo();
       state.nodes.delete(target.id);
       state.connections = state.connections.filter(c => c.from !== target.id && c.to !== target.id);
@@ -3474,6 +3531,9 @@ function generateNodeBrief(nodeId) {
   if (r?.features) nonNeg += (nonNeg ? '\n\n' : '') + '產品特色：' + r.features;
   let framework = linked.map(l => `${l.dir} ${l.topic}`).join('\n');
   const ctaText = node.main.cta || r?.suggestedCta || '';
+  const shortClips = confirmedAngles.length > 0
+    ? confirmedAngles.slice(0, 2).map(a => `「${a.title}」(${a.why})`).join('；')
+    : (allAngles.length > 0 ? `（拍完後從 ${allAngles.length} 個拍攝方向中挑選）` : '');
 
   let html = `<div class="brief-node-header">${esc(node.main.topic)}</div>`;
   html += `<div class="brief-meta">${esc(matLabel)} ｜ ${esc(stageLabel)} ｜ ${node.isMain ? '★ 主節點' : '支線'}</div>`;
@@ -3517,7 +3577,7 @@ function generateNodeBrief(nodeId) {
     </div>
 
     <div class="brief-exec-block">
-      <div class="brief-exec-label">鏡頭清單（${confirmedAngles.length} 個已確認）</div>
+      <div class="brief-exec-label">鏡頭清單（${confirmedAngles.length} 個）<span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:6px">← 拍攝當天逐一打勾</span></div>
       ${shotListHtml}
     </div>
 
@@ -3658,31 +3718,42 @@ function generateNodeBrief(nodeId) {
     }
   });
 
-  // Copy brief to clipboard
+  // Copy brief to clipboard — matches the 拍攝執行清單 display format
   $('#btn-copy-brief')?.addEventListener('click', () => {
     const lines = [];
     lines.push(`# ${node.main.topic}`);
+    lines.push(`${matLabel} ｜ ${stageLabel} ｜ ${node.isMain ? '★ 主節點' : '支線'}`);
     lines.push('');
-    lines.push(`## 01 影片目的`);
-    lines.push(node.main.job ? `${node.main.job} — ${JOB_DESC[node.main.job] || ''}` : '未指定');
+    lines.push(`## 🎬 拍攝執行清單`);
     lines.push('');
-    lines.push(`## 02 目標人物 Person`);
-    lines.push(personText || '（待補）');
+    lines.push(`### 開場 Hook（前 5 秒）`);
+    lines.push(r?.suggestedHook || '⚠️ 還沒選定 Hook');
     lines.push('');
-    lines.push(`## 03 核心訊息 Core Message`);
-    lines.push(coreMsg || '（待補）');
+    lines.push(`### 鏡頭清單（${confirmedAngles.length} 個已確認）`);
+    if (confirmedAngles.length > 0) {
+      confirmedAngles.forEach((a, i) => {
+        lines.push(`${i + 1}. ${a.title}`);
+        if (a.howToShoot) lines.push(`   📷 ${a.howToShoot}`);
+      });
+    } else {
+      lines.push('⚠️ 還沒確認拍攝清單');
+    }
+    if (node.detailShots?.length > 0) {
+      lines.push('');
+      lines.push(`### 細節鏡頭`);
+      node.detailShots.forEach(d => {
+        lines.push(`- ${d.what}：${d.why}`);
+      });
+    }
     lines.push('');
-    lines.push(`## 04 必留元素 Non-Negotiables`);
-    lines.push(nonNeg || '（待補）');
+    lines.push(`### 結尾 CTA`);
+    lines.push(ctaText || '⚠️ 還沒設定 CTA');
     lines.push('');
-    lines.push(`## 05 短片潛力點 Short Clip Moments`);
-    lines.push(shortClips || '（拍攝完成後補填）');
-    lines.push('');
-    lines.push(`## 06 框架連結 Framework Link`);
-    lines.push(framework || '無');
-    lines.push('');
-    lines.push(`## CTA`);
-    lines.push(ctaText || '（待補）');
+    lines.push(`## 📊 策略背景`);
+    lines.push(`目的：${node.main.job ? `${node.main.job} — ${JOB_DESC[node.main.job] || ''}` : '未指定'}`);
+    if (personText) { lines.push(''); lines.push(`觀眾：${personText}`); }
+    if (r?.positioning) { lines.push(''); lines.push(`定位：${r.positioning}`); }
+    if (framework) { lines.push(''); lines.push(`連線：\n${framework}`); }
     if (node.scriptDraft) {
       lines.push('');
       lines.push(`## 腳本大綱`);
@@ -4213,7 +4284,18 @@ function bindEvents() {
   });
 
   $('#btn-export').addEventListener('click', exportAllBriefs);
-  $('#btn-review').addEventListener('click', runGlobalReview);
+  $('#btn-review').addEventListener('click', () => {
+    // If cached AI review exists, restore it immediately without API call
+    if (state.lastAiReview) {
+      const allSuggestions = analyzeCanvas();
+      const suggestions = allSuggestions.filter(s => !state.dismissedSuggestions.has(s.id));
+      state.ghostNodes = suggestions;
+      render();
+      showReviewPanel(suggestions, state.lastAiReview);
+    } else {
+      runGlobalReview();
+    }
+  });
   $('#btn-brief').addEventListener('click', generateBrief);
   $('#btn-auto-arrange')?.addEventListener('click', autoArrangeNodes);
   $('#btn-help')?.addEventListener('click', () => {

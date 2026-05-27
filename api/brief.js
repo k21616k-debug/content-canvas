@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
@@ -46,6 +47,7 @@ export default async function handler(req, res) {
       messages: [{ role: 'user', content: prompt }],
     });
 
+    addUsage('brief', msg.usage.input_tokens, msg.usage.output_tokens);
     const text = msg.content[0].text.trim();
     const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
     let result;

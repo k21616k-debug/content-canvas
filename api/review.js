@@ -20,6 +20,8 @@ export default async function handler(req, res) {
       if (n.hook) parts.push(`Hook=${n.hook}`);
       if (n.isMain) parts.push('★主節點');
       if (n.angles) parts.push(`拍攝角度：${n.angles}`);
+      if (!n.hasUserNotes && !n.hasResearch) parts.push('⚠️知識空洞');
+      else if (!n.hasResearch) parts.push('未做AI擴寫');
       return parts.join(' | ');
     }).join('\n');
 
@@ -91,7 +93,7 @@ ${connsText}
 6. 被忽略的機會點
 7. SEO 關鍵字打架
 8. 發布順序
-9. 知識空洞（哪些節點既無使用者筆記、也沒做過 AI 擴寫？這些節點 AI 只能靠猜，quality issue 必報）`;
+9. 知識空洞：標記「⚠️知識空洞」的節點完全缺乏產品知識，quality issue 必報，具體說明需要補什麼資訊才能拍好這支影片`;
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',

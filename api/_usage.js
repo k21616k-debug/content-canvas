@@ -7,6 +7,7 @@ const usage = {
   expand: { calls: 0, inputTokens: 0, outputTokens: 0 },
   review: { calls: 0, inputTokens: 0, outputTokens: 0 },
   ask:    { calls: 0, inputTokens: 0, outputTokens: 0 },
+  brief:  { calls: 0, inputTokens: 0, outputTokens: 0 },
 };
 
 export function addUsage(endpoint, inputTokens, outputTokens) {
