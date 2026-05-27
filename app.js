@@ -556,10 +556,11 @@ function render() {
     area.classList.remove('list-mode');
     area.style.backgroundSize = `${24 * z}px ${24 * z}px`;
     renderTopicView(canvas);
-    // Force layout reflow so newly-appended cards have computed dimensions
-    // (offsetWidth/offsetHeight return 0 for elements added after innerHTML='')
-    void canvas.offsetHeight;
+    // After innerHTML='' + appendChild, offsetWidth/Height may return 0 until
+    // the browser completes layout.  Render once now with fallback dimensions,
+    // then schedule a second pass after paint for pixel-perfect accuracy.
     renderConnections(svg);
+    requestAnimationFrame(() => requestAnimationFrame(() => renderConnections(svg)));
     $('#btn-add').style.display = '';
   } else if (state.currentView === 'topic' && state.topicMode === 'list') {
     canvas.style.width = '100%';
@@ -1249,10 +1250,10 @@ function renderConnections(svg) {
     const tp = tEl
       ? { x: parseFloat(tEl.style.left) || 0, y: parseFloat(tEl.style.top) || 0 }
       : toNode.positions.topic;
-    const fw = fEl ? (fEl.offsetWidth  || (fromNode.isMain ? 280 : 240)) : (fromNode.isMain ? 280 : 240);
-    const tw = tEl ? (tEl.offsetWidth  || (toNode.isMain   ? 280 : 240)) : (toNode.isMain   ? 280 : 240);
-    const fh = fEl ? (fEl.offsetHeight || 90) : 120;
-    const th = tEl ? (tEl.offsetHeight || 90) : 120;
+    const fw = fEl ? (fEl.offsetWidth  || 280) : 280;
+    const tw = tEl ? (tEl.offsetWidth  || 280) : 280;
+    const fh = fEl ? (fEl.offsetHeight || 90) : 90;
+    const th = tEl ? (tEl.offsetHeight || 90) : 90;
 
     // Fixed anchors: source always exits right-center, target always enters left-center
     const x1 = fp.x + fw;
