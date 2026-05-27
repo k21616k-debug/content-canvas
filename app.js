@@ -2584,7 +2584,11 @@ function analyzeCanvas() {
     .map(([w]) => w);
 
   // Main theme = most common word; brands = top few common words
-  const themeWord = commonWords[0] || existingTopics[0]?.substring(0, 6) || '產品';
+  // Fallback: extract noun phrase before the first particle (的/是/在/有/跟/和/與) to avoid
+  // slicing mid-phrase (e.g. "騎士背包的三種分類".substring(0,6) → "騎士背包的三" which is broken)
+  const _t0 = existingTopics[0] || '';
+  const _particleMatch = _t0.match(/^(.+?)(?:的|是|在|有|跟|和|與|vs|：|，)/);
+  const themeWord = commonWords[0] || (_particleMatch ? _particleMatch[1] : _t0.substring(0, 6)) || '產品';
   const brandNames = commonWords.filter(w => w.length >= 2).slice(0, 3);
 
   // ── Layer 0: Incomplete nodes (auto-complete) ──
@@ -2754,73 +2758,6 @@ function analyzeCanvas() {
         toTopic: toNode.main.topic,
         reason: `「${orphan.main.topic}」目前沒有連到任何節點${bestKeywords.length > 0 ? `，跟「${bestKeywords.join('、')}」相關` : ''}，建議連到「${bestMatch.main.topic}」`,
       });
-    }
-  }
-
-  // ── Layer 1: Stage gap analysis ──
-  const stageNodes = { A: [], B: [], C: [], D: [] };
-  for (const n of nodes) {
-    const s = n.positions.journey?.stage;
-    if (s && stageNodes[s]) stageNodes[s].push(n);
-  }
-
-  // Build dynamic stage templates based on actual canvas content
-  const mainNode = nodes.find(n => n.isMain);
-  const mainLabel = mainNode ? mainNode.main.topic.substring(0, 10) : themeWord;
-  const stageTemplates = {
-    A: [
-      { tpl: (th) => `${th}新手常犯的 5 個錯誤`, job: '吸引', material: 'short', reason: 'A 認知階段缺內容，需要入門向吸引新觀眾' },
-      { tpl: (th) => `一分鐘搞懂${th}怎麼選`, job: '吸引', material: 'short', reason: '短秒數科普片適合拉新流量' },
-    ],
-    B: [
-      { tpl: (th, brands) => brands.length >= 2 ? `${brands.slice(0, 2).join(' vs ')} 規格實測對決` : `${th}品牌橫向評比`, job: '培育', material: 'long', reason: 'B 評估階段需要比較型內容幫觀眾做選擇' },
-      { tpl: (th) => `${th}隱藏規格解讀：廠商不會告訴你的事`, job: '培育', material: 'long', reason: '深度分析建立專業形象' },
-    ],
-    C: [
-      { tpl: (th, brands) => brands.length > 0 ? `${brands[0]} 30天真實使用紀錄` : `${th}一個月使用心得老實說`, job: '轉換', material: 'long', reason: 'C 信任階段需要長期使用驗證，讓觀眾相信不是業配' },
-      { tpl: (th) => `${th}真實使用回饋合集`, job: '培育', material: 'short', reason: '第三方用戶見證比自己說更有說服力' },
-    ],
-    D: [
-      { tpl: (th) => `${th}哪裡買最划算？通路比價＋注意事項`, job: '轉換', material: 'short', reason: 'D 安心階段幫觀眾消除最後購買猶豫' },
-      { tpl: (th, brands) => brands.length > 0 ? `${brands.join('／')} 保固售後完整比較` : `${th}退換貨＆保固完整指南`, job: '轉換', material: 'short', reason: '售後保障資訊降低購買風險感' },
-      { tpl: (th) => `買了${th}之後你該知道的保養技巧`, job: '轉換', material: 'short', reason: '購後服務內容讓觀眾安心下單' },
-    ],
-  };
-
-  for (const [stage, stageNodeList] of Object.entries(stageNodes)) {
-    const actual = Math.round((stageNodeList.length / totalNodes) * 100);
-    const target = COLD_START_RATIOS[stage];
-    const deficit = target - actual;
-
-    if (deficit > 5 || stageNodeList.length === 0) {
-      // How many to suggest
-      const count = stageNodeList.length === 0 ? 2 : 1;
-      const templates = stageTemplates[stage] || [];
-
-      // Filter out templates that overlap with existing topics
-      const available = templates.filter(t => {
-        const title = t.tpl(themeWord, brandNames);
-        return !existingTopics.some(et => {
-          const overlap = title.split('').filter(c => et.includes(c)).length;
-          return overlap > title.length * 0.5;
-        });
-      });
-
-      for (let i = 0; i < Math.min(count, available.length); i++) {
-        const tmpl = available[i];
-        const topic = tmpl.tpl(themeWord, brandNames);
-        suggestions.push({
-          id: 'ghost_gap_' + stage + '_' + i,
-          type: 'new-node',
-          topic,
-          job: tmpl.job,
-          cta: '',
-          stage,
-          material: tmpl.material,
-          reason: tmpl.reason,
-          deficit: `${JOURNEY_LABELS[stage]} 現有 ${actual}%，目標 ${target}%`,
-        });
-      }
     }
   }
 
