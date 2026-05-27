@@ -68,7 +68,8 @@ actions 是你建議的具體操作，只在你認為應該修改畫布時才加
     });
 
     const text = msg.content[0].text.trim();
-    const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+    const s = text.indexOf('{'); const e = text.lastIndexOf('}');
+    const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
     const result = JSON.parse(clean);
 
     return res.status(200).json(result);

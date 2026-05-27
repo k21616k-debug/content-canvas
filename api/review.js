@@ -90,7 +90,8 @@ ${connsText}
     });
 
     const text = msg.content[0].text.trim();
-    const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+    const s = text.indexOf('{'); const e = text.lastIndexOf('}');
+    const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
     let result;
     try { result = JSON.parse(clean); } catch { result = { issues: [], overallScore: 5, summary: text.substring(0, 200) }; }
 

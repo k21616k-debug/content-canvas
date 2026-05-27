@@ -98,12 +98,13 @@ searchKeywords 規則：
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2500,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = msg.content[0].text.trim();
-    const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+    const s = text.indexOf('{'); const e = text.lastIndexOf('}');
+    const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
     let result;
     try {
       result = JSON.parse(clean);

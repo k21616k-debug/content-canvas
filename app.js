@@ -14,8 +14,13 @@ const JOB_DESC = { '吸引': '拉新觀眾進來', '培育': '加深興趣與信
 // Stage → default Job mapping
 const STAGE_DEFAULT_JOB = { A: '吸引', B: '培育', C: '轉換', D: '轉換' };
 
+const STATUS_LABELS = { '': '未指定', planned: '規劃中', filming: '拍攝中', editing: '後製中', published: '已發布' };
+const STATUS_COLORS = { planned: '#94a3b8', filming: '#f59e0b', editing: '#3b82f6', published: '#22c55e' };
+
+const MAX_UNDO = 50;
+
 const state = {
-  currentView: 'topic',
+  currentView: 'journey',
   nodes: new Map(),
   connections: [],
   selectedNodeId: null,
@@ -33,6 +38,13 @@ const state = {
   panState: null,        // { startX, startY, scrollLeft, scrollTop }
   // Edge-drag connection
   connDragState: null,   // { fromNodeId, startX, startY }
+  // Undo / Redo stacks
+  undoStack: [],
+  redoStack: [],
+  // Manual sort order for topic list view (array of node IDs)
+  topicListOrder: [],
+  // Show journey kanban lane background in topic free view
+  showKanbanBg: false,
 };
 
 // ── Project Management ──
@@ -129,6 +141,7 @@ function saveState() {
     nodes: [...state.nodes.entries()],
     connections: state.connections,
     dismissedSuggestions: [...state.dismissedSuggestions],
+    topicListOrder: state.topicListOrder,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   saveToFile(data);
@@ -165,11 +178,19 @@ async function loadState() {
     state.currentView = data.currentView || 'topic';
     state.nodes = new Map(data.nodes || []);
     state.connections = data.connections || [];
+    state.topicListOrder = data.topicListOrder || [];
     // Migrate old material columns to new 2-column layout
     for (const node of state.nodes.values()) {
       const col = node.positions?.material?.column;
       if (col === 'longform') node.positions.material.column = 'long';
       else if (col === 'shortform' || col === 'clip') node.positions.material.column = 'short';
+      // Migrate: ensure status field exists on all nodes
+      if (!('status' in node)) node.status = '';
+      // Migrate: ensure positions structure is complete (guards against very old data)
+      if (!node.positions) node.positions = {};
+      if (!node.positions.journey) node.positions.journey = { stage: '', order: 0 };
+      if (!node.positions.material) node.positions.material = { column: 'long', order: 0 };
+      if (!node.positions.topic) node.positions.topic = { x: 100, y: 100 };
     }
     localStorage.setItem(STORAGE_KEY, raw);
   } catch { /* ignore corrupt data */ }
@@ -178,6 +199,7 @@ async function loadState() {
 // ── Node CRUD ──
 
 function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
+  pushUndo();
   const id = 'n' + Date.now() + Math.random().toString(36).slice(2, 6);
   const node = {
     id,
@@ -193,10 +215,11 @@ function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
     targetAudience: '',
     ecosystemNotes: '',
     isMain: !!isMain,
+    status: '',
     positions: {
       topic: { x, y },
       material: { column: 'long', order: 0 },
-      journey: { stage: 'A', order: 0 },
+      journey: { stage: '', order: 0 },
     },
     createdAt: Date.now(),
   };
@@ -206,6 +229,7 @@ function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
 }
 
 function deleteNode(id) {
+  pushUndo();
   state.nodes.delete(id);
   state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
   if (state.selectedNodeId === id) state.selectedNodeId = null;
@@ -223,12 +247,60 @@ function updateNode(id, updates) {
   if (updates.user !== undefined) node.user = updates.user;
   if (updates.aiSuggest) node.aiSuggest = updates.aiSuggest;
   if (updates.isMain !== undefined) node.isMain = updates.isMain;
+  if (updates.status !== undefined) node.status = updates.status;
   if (updates.positions) {
     for (const [view, pos] of Object.entries(updates.positions)) {
       Object.assign(node.positions[view], pos);
     }
   }
   saveState();
+}
+
+// ── Undo / Redo ──
+
+function snapshotState() {
+  return {
+    nodes: [...state.nodes.entries()].map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]),
+    connections: JSON.parse(JSON.stringify(state.connections)),
+  };
+}
+
+function pushUndo() {
+  state.undoStack.push(snapshotState());
+  if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
+  state.redoStack = [];
+  updateUndoButtons();
+}
+
+function applySnapshot(snap) {
+  state.nodes = new Map(snap.nodes);
+  state.connections = [...snap.connections];
+  if (state.selectedNodeId && !state.nodes.has(state.selectedNodeId)) state.selectedNodeId = null;
+}
+
+function undo() {
+  if (!state.undoStack.length) return;
+  state.redoStack.push(snapshotState());
+  applySnapshot(state.undoStack.pop());
+  saveState();
+  render();
+  updateUndoButtons();
+}
+
+function redo() {
+  if (!state.redoStack.length) return;
+  state.undoStack.push(snapshotState());
+  applySnapshot(state.redoStack.pop());
+  saveState();
+  render();
+  updateUndoButtons();
+}
+
+function updateUndoButtons() {
+  const u = document.getElementById('btn-undo');
+  const r = document.getElementById('btn-redo');
+  if (u) u.disabled = state.undoStack.length === 0;
+  if (r) r.disabled = state.redoStack.length === 0;
 }
 
 // ── Render ──
@@ -258,8 +330,8 @@ function renderHealthBar() {
 
   for (const n of nodes) {
     jobCounts[n.main.job || ''] = (jobCounts[n.main.job || ''] || 0) + 1;
-    const stage = n.positions?.journey?.stage || 'A';
-    stageCounts[stage] = (stageCounts[stage] || 0) + 1;
+    const stage = n.positions?.journey?.stage;
+    if (stage) stageCounts[stage] = (stageCounts[stage] || 0) + 1;
     const mat = n.positions?.material?.column || 'long';
     materialCounts[mat] = (materialCounts[mat] || 0) + 1;
     if (n.isMain) hasMain = true;
@@ -349,7 +421,8 @@ function renderHealthBar() {
   // Show max 3 most important alerts to avoid overwhelming
   const sortedAlerts = alerts.sort((a, b) => (a.type === 'warn' ? 0 : 1) - (b.type === 'warn' ? 0 : 1));
   const displayAlerts = sortedAlerts.slice(0, 3);
-  const hiddenCount = alerts.length - displayAlerts.length;
+  const hiddenAlerts = sortedAlerts.slice(3);
+  const hiddenCount = hiddenAlerts.length;
 
   // Job distribution pills
   const jobPills = ['吸引', '培育', '轉換'].map(j => {
@@ -364,9 +437,36 @@ function renderHealthBar() {
     return `<span class="health-pill ${count === 0 ? 'health-empty' : 'health-ok'}">${label.split(' ')[0]}${label.split(' ')[1] || ''} ${count}</span>`;
   }).join('');
 
+  // Map alerts to clickable actions
+  const ALERT_ACTIONS = [
+    { match: msg => msg.includes('購買階段缺口'), action: 'journey-view', label: '查看階段' },
+    { match: msg => msg.includes('缺少「吸引」'), action: 'add-attract', label: '新增' },
+    { match: msg => msg.includes('缺少「轉換」'), action: 'add-convert', label: '新增' },
+    { match: msg => msg.includes('沒有連線') || msg.includes('任何連線'), action: 'connect-mode', label: '開始連線' },
+    { match: msg => msg.includes('全部都是長片'), action: 'material-view', label: '查看素材' },
+  ];
+
+  const makeAlertSpan = (a) => {
+    const act = ALERT_ACTIONS.find(x => x.match(a.msg));
+    const actionHtml = act ? `<button class="health-alert-action" data-action="${act.action}">${act.label}</button>` : '';
+    return `<span class="health-alert health-alert-${a.type}">${a.type === 'warn' ? '⚠️' : '💡'} ${a.msg}${actionHtml}</span>`;
+  };
+
+  // Compute "next step" guidance based on biggest gap
+  let nextStep = '';
+  if (alerts.length > 0) {
+    const stageCoverage = Object.entries(stageCounts).filter(([, v]) => v === 0).map(([k]) => k);
+    if (jobCounts['吸引'] === 0) nextStep = '新增一支「吸引」類影片，讓新觀眾找到你';
+    else if (jobCounts['轉換'] === 0 && total >= 3) nextStep = '新增一支「轉換」類影片，推動觀眾購買';
+    else if (stageCoverage.length > 0) nextStep = `補一支「${JOURNEY_LABELS[stageCoverage[0]]}」階段影片，覆蓋購買旅程`;
+    else if (state.connections.length === 0 && total >= 3) nextStep = '用 🔗 把相關影片串連起來，引導觀眾流動';
+  }
+
   // Compose health bar
   const alertsHtml = displayAlerts.length > 0
-    ? `<div class="health-alerts">${displayAlerts.map(a => `<span class="health-alert health-alert-${a.type}">${a.type === 'warn' ? '⚠️' : '💡'} ${a.msg}</span>`).join('')}${hiddenCount > 0 ? `<span class="health-alert health-alert-more">還有 ${hiddenCount} 項建議…</span>` : ''}</div>`
+    ? `<div class="health-alerts">${displayAlerts.map(makeAlertSpan).join('')}${hiddenCount > 0 ? `
+        <button class="health-expand-btn health-alert health-alert-more">還有 ${hiddenCount} 項建議 ▾</button>
+        <div class="health-hidden-alerts">${hiddenAlerts.map(makeAlertSpan).join('')}</div>` : ''}${nextStep ? `<div class="health-nextstep">👉 你的下一步：${nextStep}</div>` : ''}</div>`
     : `<div class="health-alerts"><span class="health-alert health-alert-good">✅ 內容策略看起來不錯！</span></div>`;
 
   healthEl.innerHTML = `
@@ -376,6 +476,33 @@ function renderHealthBar() {
     </div>
     ${alertsHtml}
   `;
+
+  // Expand hidden alerts
+  healthEl.querySelector('.health-expand-btn')?.addEventListener('click', function () {
+    const hidden = healthEl.querySelector('.health-hidden-alerts');
+    if (!hidden) return;
+    const expanded = hidden.style.display === 'flex';
+    hidden.style.display = expanded ? 'none' : 'flex';
+    this.textContent = expanded ? `還有 ${hiddenCount} 項建議 ▾` : '收起 ▴';
+  });
+
+  // Bind action buttons (re-bind on each render since innerHTML is replaced)
+  healthEl.querySelectorAll('.health-alert-action').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = btn.dataset.action;
+      if (action === 'journey-view') { state.currentView = 'journey'; render(); }
+      else if (action === 'material-view') { state.currentView = 'material'; render(); }
+      else if (action === 'connect-mode') { state.connectMode = true; render(); }
+      else if (action === 'add-attract') {
+        showModal(100, 100);
+        setTimeout(() => { const el = $('#input-job'); if (el) el.value = '吸引'; }, 60);
+      } else if (action === 'add-convert') {
+        showModal(100, 100);
+        setTimeout(() => { const el = $('#input-job'); if (el) el.value = '轉換'; }, 60);
+      }
+    });
+  });
 }
 
 function updateSmartHint() {
@@ -393,8 +520,8 @@ function updateSmartHint() {
   const stageCounts = { A: 0, B: 0, C: 0, D: 0 };
   for (const n of nodes) {
     if (n.main.job && jobCounts[n.main.job] !== undefined) jobCounts[n.main.job]++;
-    const stage = n.positions?.journey?.stage || 'A';
-    stageCounts[stage]++;
+    const stage = n.positions?.journey?.stage;
+    if (stage) stageCounts[stage]++;
   }
 
   // Find biggest gap
@@ -444,7 +571,7 @@ function calcCompleteness() {
   else if (uniqueJobs.size >= 1) score += 5;
 
   // 4. At least 2 stages covered (15 pts)
-  const uniqueStages = new Set(nodes.map(n => n.positions?.journey?.stage || 'A'));
+  const uniqueStages = new Set(nodes.map(n => n.positions?.journey?.stage).filter(Boolean));
   if (uniqueStages.size >= 4) score += 15;
   else if (uniqueStages.size >= 3) score += 10;
   else if (uniqueStages.size >= 2) score += 7;
@@ -476,7 +603,14 @@ function nodeReadiness(node) {
   return Math.min(score, 100);
 }
 
+function applyGuideDismiss() {
+  const isDismissed = localStorage.getItem('guide_dismissed') === '1';
+  const steps = document.getElementById('onboarding-steps');
+  if (steps) steps.style.display = isDismissed ? 'none' : '';
+}
+
 function render() {
+  applyGuideDismiss();
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === state.currentView));
   const completenessScore = calcCompleteness();
   $('#node-count').innerHTML = `${state.nodes.size} 個節點 ${completenessScore > 0 ? `<span class="completeness-badge" title="企劃完成度">${completenessScore}%</span>` : ''}`;
@@ -538,7 +672,9 @@ function render() {
   const toolbar = $('#topic-toolbar');
   toolbar.classList.toggle('hidden', state.currentView !== 'topic');
   if (state.currentView === 'topic') {
-    $$('#topic-toolbar .sub-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === state.topicMode));
+    $$('#topic-toolbar .sub-tab[data-mode]').forEach(t => t.classList.toggle('active', t.dataset.mode === state.topicMode));
+    $('#btn-kanban-bg')?.classList.toggle('active', state.showKanbanBg);
+    $('#btn-kanban-bg')?.classList.toggle('hidden', state.topicMode !== 'free');
     $('#zoom-level').textContent = Math.round(state.zoomLevel * 100) + '%';
     $('#zoom-controls').classList.toggle('hidden', state.topicMode !== 'free');
   }
@@ -595,7 +731,7 @@ function render() {
 }
 
 function renderTopicView(container) {
-  renderKanbanLanes(container);
+  if (state.showKanbanBg) renderKanbanLanes(container);
   let idx = 0;
   for (const node of state.nodes.values()) {
     const el = buildNodeCard(node);
@@ -668,12 +804,19 @@ function renderTopicListView(container) {
     if (connMap.has(conn.to)) connMap.get(conn.to).push(conn.from);
   }
 
-  // Sort: main nodes first, then by job
+  // Determine display order: use saved topicListOrder if valid, else default sort
+  const allIds = [...state.nodes.keys()];
+  const validOrder = state.topicListOrder.filter(id => state.nodes.has(id));
+  const unordered = allIds.filter(id => !validOrder.includes(id));
   const jobOrder = { '吸引': 0, '培育': 1, '轉換': 2 };
-  const sorted = [...state.nodes.values()].sort((a, b) => {
-    if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
-    return (jobOrder[a.main.job] ?? 9) - (jobOrder[b.main.job] ?? 9);
+  unordered.sort((a, b) => {
+    const na = state.nodes.get(a), nb = state.nodes.get(b);
+    if (na.isMain !== nb.isMain) return na.isMain ? -1 : 1;
+    return (jobOrder[na.main.job] ?? 9) - (jobOrder[nb.main.job] ?? 9);
   });
+  const sorted = [...validOrder, ...unordered].map(id => state.nodes.get(id)).filter(Boolean);
+
+  let dragSrcId = null;
 
   for (const node of sorted) {
     const linked = connMap.get(node.id) || [];
@@ -689,7 +832,9 @@ function renderTopicListView(container) {
     const row = document.createElement('div');
     row.className = 'topic-list-row' + (node.isMain ? ' is-main' : '') + (node.id === state.selectedNodeId ? ' selected' : '');
     row.dataset.nodeId = node.id;
+    row.draggable = true;
     row.innerHTML = `
+      <span class="list-drag-handle" title="拖曳排序">⠿</span>
       <div class="list-row-left">
         ${node.isMain ? '<span class="main-badge-sm">★</span>' : '<span class="list-row-num"></span>'}
         <div class="list-row-info">
@@ -708,7 +853,35 @@ function renderTopicListView(container) {
           : '<span class="list-no-link">無連線</span>'}
       </div>
     `;
-    row.addEventListener('click', () => selectNode(node.id));
+
+    row.addEventListener('dragstart', (e) => {
+      dragSrcId = node.id;
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('list-row-dragging');
+    });
+    row.addEventListener('dragend', () => row.classList.remove('list-row-dragging'));
+    row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('list-row-drag-over'); });
+    row.addEventListener('dragleave', () => row.classList.remove('list-row-drag-over'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.classList.remove('list-row-drag-over');
+      if (!dragSrcId || dragSrcId === node.id) return;
+      // Rebuild order from current DOM order, then swap src and target
+      const rows = [...wrapper.querySelectorAll('.topic-list-row')];
+      const ids = rows.map(r => r.dataset.nodeId);
+      const srcIdx = ids.indexOf(dragSrcId);
+      const tgtIdx = ids.indexOf(node.id);
+      ids.splice(srcIdx, 1);
+      ids.splice(tgtIdx, 0, dragSrcId);
+      state.topicListOrder = ids;
+      saveState();
+      render();
+    });
+
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('list-drag-handle')) return;
+      selectNode(node.id);
+    });
     wrapper.appendChild(row);
   }
   container.appendChild(wrapper);
@@ -831,6 +1004,11 @@ function renderMaterialView(container) {
   polygon.setAttribute('fill', '#64748b');
   marker.appendChild(polygon);
   defs.appendChild(marker);
+  // Active (blue) arrowhead for selected connections
+  const markerActive = marker.cloneNode(true);
+  markerActive.setAttribute('id', 'mat-arrowhead-active');
+  markerActive.querySelector('polygon').setAttribute('fill', '#3b82f6');
+  defs.appendChild(markerActive);
   arrowSvg.appendChild(defs);
 
   for (const [key, label] of Object.entries(MATERIAL_LABELS)) {
@@ -908,8 +1086,12 @@ function renderMaterialView(container) {
 
   // Draw arrows after layout is computed
   requestAnimationFrame(() => {
-    arrowSvg.setAttribute('width', wrapper.scrollWidth);
-    arrowSvg.setAttribute('height', wrapper.scrollHeight);
+    // Use inline style (not setAttribute) so it overrides CSS height:100% and prevents clipping
+    arrowSvg.style.width = wrapper.scrollWidth + 'px';
+    arrowSvg.style.height = wrapper.scrollHeight + 'px';
+
+    const wrapRect = wrapper.getBoundingClientRect();
+    const scrollTop = wrapper.scrollTop;   // account for any scroll offset at draw time
 
     const shortNodes = [...state.nodes.values()].filter(n => n.positions.material?.column === 'short');
     for (const sNode of shortNodes) {
@@ -923,24 +1105,34 @@ function renderMaterialView(container) {
       const toEl = wrapper.querySelector(`.node-card[data-node-id="${sNode.id}"]`);
       if (!fromEl || !toEl) continue;
 
-      const wrapRect = wrapper.getBoundingClientRect();
       const fromRect = fromEl.getBoundingClientRect();
       const toRect = toEl.getBoundingClientRect();
 
       const x1 = fromRect.right - wrapRect.left;
-      const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top;
+      const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top + scrollTop;
       const x2 = toRect.left - wrapRect.left;
-      const y2 = toRect.top + toRect.height / 2 - wrapRect.top;
+      const y2 = toRect.top + toRect.height / 2 - wrapRect.top + scrollTop;
       const midX = (x1 + x2) / 2;
 
+      const isActive = !state.selectedNodeId
+                    || state.selectedNodeId === parentId
+                    || state.selectedNodeId === sNode.id;
+
       const d = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.dataset.from = parentId;
+      g.dataset.to = sNode.id;
+      g.style.opacity = isActive ? '1' : '0.12';
+      g.style.transition = 'opacity 0.2s';
+
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
-      path.setAttribute('stroke', '#64748b');
-      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('stroke', isActive && state.selectedNodeId ? '#3b82f6' : '#64748b');
+      path.setAttribute('stroke-width', isActive && state.selectedNodeId ? '2' : '1.5');
       path.setAttribute('fill', 'none');
-      path.setAttribute('marker-end', 'url(#mat-arrowhead)');
-      arrowSvg.appendChild(path);
+      path.setAttribute('marker-end', isActive && state.selectedNodeId ? 'url(#mat-arrowhead-active)' : 'url(#mat-arrowhead)');
+      g.appendChild(path);
+      arrowSvg.appendChild(g);
     }
   });
 }
@@ -964,6 +1156,29 @@ function renderJourneyView(container) {
   const wrapper = document.createElement('div');
   wrapper.className = 'column-view';
   const totalNodes = state.nodes.size || 1;
+
+  // Unassigned column — nodes with no stage set
+  const unassignedNodes = [...state.nodes.values()].filter(n => !n.positions.journey?.stage);
+  if (unassignedNodes.length > 0) {
+    const ucol = document.createElement('div');
+    ucol.className = 'column column-unassigned';
+    ucol.innerHTML = `
+      <div class="column-header">未分配<div class="column-desc">拖曳至對應的購買階段</div></div>
+    `;
+    ucol.addEventListener('dragover', (e) => { e.preventDefault(); ucol.classList.add('drag-over'); });
+    ucol.addEventListener('dragleave', () => ucol.classList.remove('drag-over'));
+    ucol.addEventListener('drop', (e) => {
+      e.preventDefault();
+      ucol.classList.remove('drag-over');
+      const nodeId = e.dataTransfer.getData('text/plain');
+      if (nodeId) { updateNode(nodeId, { positions: { journey: { stage: '' } } }); render(); }
+    });
+    for (const node of unassignedNodes) {
+      const el = buildNodeCard(node, { compact: true });
+      ucol.appendChild(el);
+    }
+    wrapper.appendChild(ucol);
+  }
 
   for (const [key, label] of Object.entries(JOURNEY_LABELS)) {
     const col = document.createElement('div');
@@ -989,17 +1204,20 @@ function renderJourneyView(container) {
     const target = COLD_START_RATIOS[key];
     const diff = actual - target;
     let healthClass = 'healthy';
-    if (Math.abs(diff) > 15) healthClass = 'danger';
-    else if (Math.abs(diff) > 8) healthClass = 'warning';
+    if (diff > 10) healthClass = 'over-quota';
+    else if (diff < -15) healthClass = 'danger';
+    else if (diff < -8) healthClass = 'warning';
 
     const gapHtml = nodes.length === 0
       ? `<div class="gap-warning">⚠️ 缺口</div><div class="gap-hint">建議：${GAP_HINTS[key]}</div>`
       : (actual < target - 5 ? `<div class="gap-hint">可補：${GAP_HINTS[key]}</div>` : '');
 
+    const overLabel = diff > 10 ? ` <span class="over-quota-tag">過度集中</span>` : '';
+
     col.innerHTML = `
       <div class="column-header">${label}<div class="column-desc">${JOURNEY_DESC[key]}</div></div>
       <div class="health-bar"><div class="health-fill ${healthClass}" style="width:${Math.min(actual, 100)}%"></div></div>
-      <div class="column-target">現有 ${actual}% ／目標 ${target}%</div>
+      <div class="column-target">現有 ${actual}% ／目標 ${target}%${overLabel}</div>
       ${gapHtml}
     `;
     col.dataset.columnKey = key;
@@ -1060,7 +1278,8 @@ function buildNodeCard(node, opts = {}) {
     + (node.isMain ? ' main-node' : '')
     + (node.id === state.selectedNodeId ? ' selected' : '')
     + (compact ? ' compact' : '')
-    + (stage ? ` card-stage-${stage}` : '');
+    + (stage ? ` card-stage-${stage}` : '')
+    + (node.status ? ` status-${node.status}` : '');
   el.dataset.nodeId = node.id;
 
   const jobClass = { '吸引': 'job-attract', '培育': 'job-nurture', '轉換': 'job-convert' }[node.main.job] || '';
@@ -1298,11 +1517,12 @@ function renderConnections(svg) {
     // Determine if this connection should be highlighted
     const isActive = state.selectedNodeId === conn.from || state.selectedNodeId === conn.to
                   || state.hoveredNodeId === conn.from || state.hoveredNodeId === conn.to;
+    const hasFocus = state.selectedNodeId || state.hoveredNodeId;
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.dataset.from = conn.from;
     g.dataset.to = conn.to;
-    g.style.opacity = isActive ? '1' : '0.45';
+    g.style.opacity = isActive ? '1' : (hasFocus ? '0.12' : '0.45');
     g.style.transition = 'opacity 0.2s';
 
     const hitArea = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -1338,7 +1558,7 @@ function highlightConnections(nodeId) {
   const groups = svg.querySelectorAll('g[data-from]');
   groups.forEach(g => {
     const active = nodeId && (g.dataset.from === nodeId || g.dataset.to === nodeId);
-    g.style.opacity = active ? '1' : '0.45';
+    g.style.opacity = active ? '1' : (nodeId ? '0.12' : '0.45');
     const p = g.querySelector('path[stroke]:not([stroke="transparent"])');
     if (p) {
       p.setAttribute('stroke', active ? '#3b82f6' : '#64748b');
@@ -1372,8 +1592,8 @@ function renderPanel() {
       return `<option value="${j}" ${(node.main.jobSecondary || '') === j ? 'selected' : ''}>${j || '無'}${desc}</option>`;
     }).join('');
 
-    const stageOptions = Object.entries(JOURNEY_LABELS).map(([k, v]) =>
-      `<option value="${k}" ${node.positions.journey?.stage === k ? 'selected' : ''}>${v}</option>`
+    const stageOptions = [['', '未指定'], ...Object.entries(JOURNEY_LABELS)].map(([k, v]) =>
+      `<option value="${k}" ${(node.positions.journey?.stage || '') === k ? 'selected' : ''}>${v}</option>`
     ).join('');
 
     const matOptions = Object.entries(MATERIAL_LABELS).map(([k, v]) =>
@@ -1390,39 +1610,28 @@ function renderPanel() {
         <input type="text" id="edit-topic" value="${esc(node.main.topic)}">
       </div>
 
-      <div class="detail-row">
-        <div class="detail-half">
-          <label>主要用途</label>
-          <select id="edit-job">${jobOptions}</select>
-        </div>
-        <div class="detail-half">
-          <label>次要用途</label>
-          <select id="edit-job-secondary">${jobSecondaryOptions}</select>
-        </div>
-      </div>
-
-      <div class="detail-row">
-        <div class="detail-half">
-          <label>階段</label>
-          <select id="edit-stage">${stageOptions}</select>
-        </div>
-        <div class="detail-half">
-          <label>素材</label>
-          <select id="edit-material">${matOptions}</select>
-        </div>
-      </div>
-
-      <div class="checkbox-row">
-        <label class="checkbox-label-inline">
-          <input type="checkbox" id="edit-main" ${node.isMain ? 'checked' : ''}>
-          <span>主節點</span>
-          <span class="field-hint">— 這個系列最重要的核心影片</span>
-        </label>
+      <div class="detail-section">
+        <label>購買階段 <span class="field-hint-inline">— 觀眾看這支影片時在哪個步驟？</span></label>
+        <select id="edit-stage">${stageOptions}</select>
+        ${(() => {
+          const stage = node.positions?.journey?.stage;
+          if (!stage) return `<div class="inline-node-hint inline-node-hint-info">💡 設定階段後，影片會出現在購買旅程對應欄位</div>`;
+          const stageNodes = [...state.nodes.values()].filter(n => n.positions?.journey?.stage === stage);
+          const label = JOURNEY_LABELS[stage];
+          if (stageNodes.length >= 3) return `<div class="inline-node-hint inline-node-hint-info">💡 「${label}」已有 ${stageNodes.length} 支影片，考慮補其他階段</div>`;
+          return '';
+        })()}
       </div>
 
       <div class="detail-section">
         <label>CTA <span class="field-hint-inline">— 影片結尾叫觀眾做的事（留言、點連結、追蹤…）</span></label>
-        <input type="text" id="edit-cta" value="${esc(node.main.cta)}">
+        <input type="text" id="edit-cta" value="${esc(node.main.cta)}" placeholder="例：留言 1 2 3 告訴我、連結在資訊欄">
+        ${!node.main.cta ? `<div class="inline-node-hint inline-node-hint-warn">💬 沒有 CTA 觀眾看完不知道下一步要做什麼，例如「留言告訴我你的想法」</div>` : ''}
+      </div>
+
+      <div class="detail-section">
+        <label>主要用途</label>
+        <select id="edit-job">${jobOptions}</select>
       </div>
 
       <div class="detail-divider"></div>
@@ -1432,6 +1641,38 @@ function renderPanel() {
         <textarea id="edit-user" rows="3" placeholder="材質、特色、你覺得好用的地方、價格...">${esc(node.user)}</textarea>
         <button class="expand-btn" id="btn-expand" title="根據你的筆記，用 AI 自動擴寫成影片企劃">✨ AI 擴寫企劃</button>
       </div>
+
+      <details class="panel-advanced">
+        <summary class="advanced-toggle">進階設定</summary>
+        <div class="advanced-body">
+          <div class="detail-row">
+            <div class="detail-half">
+              <label>次要用途</label>
+              <select id="edit-job-secondary">${jobSecondaryOptions}</select>
+            </div>
+            <div class="detail-half">
+              <label>素材</label>
+              <select id="edit-material">${matOptions}</select>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-half">
+              <label>製作狀態</label>
+              <select id="edit-status">
+                ${Object.entries(STATUS_LABELS).map(([k, v]) =>
+                  `<option value="${k}" ${(node.status || '') === k ? 'selected' : ''}>${v}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="detail-half checkbox-row-half">
+              <label class="checkbox-label-inline">
+                <input type="checkbox" id="edit-main" ${node.isMain ? 'checked' : ''}>
+                <span>主節點</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </details>
 
       ${node.aiReceivedSummary ? `
       <div class="detail-divider"></div>
@@ -1567,32 +1808,13 @@ function renderPanel() {
         <div id="ask-node-result"></div>
       </div>
       <div class="detail-actions">
-        <button class="save-btn" id="btn-save-node">儲存變更</button>
+        <span class="autosave-indicator" id="autosave-indicator"></span>
       </div>
       <div class="detail-danger-zone">
         <button class="duplicate-btn" id="btn-duplicate-node">📋 複製節點</button>
         <button class="delete-btn" id="btn-delete-node">🗑 刪除此節點</button>
       </div>
     `;
-
-    $('#btn-save-node').addEventListener('click', () => {
-      const jobSecEl = $('#edit-job-secondary');
-      updateNode(node.id, {
-        main: {
-          topic: $('#edit-topic').value,
-          job: $('#edit-job').value,
-          jobSecondary: jobSecEl ? jobSecEl.value : '',
-          cta: $('#edit-cta').value,
-        },
-        user: $('#edit-user').value,
-        isMain: $('#edit-main').checked,
-        positions: {
-          journey: { stage: $('#edit-stage').value },
-          material: { column: $('#edit-material').value },
-        },
-      });
-      render();
-    });
 
     // Auto-save on change for all fields
     function autoSaveNode() {
@@ -1606,6 +1828,7 @@ function renderPanel() {
         },
         user: $('#edit-user').value,
         isMain: $('#edit-main').checked,
+        status: $('#edit-status')?.value || '',
         positions: {
           journey: { stage: $('#edit-stage').value },
           material: { column: $('#edit-material').value },
@@ -1613,22 +1836,23 @@ function renderPanel() {
       };
       updateNode(node.id, updates);
       // Show saved indicator
-      const saveBtn = $('#btn-save-node');
-      if (saveBtn) {
-        saveBtn.textContent = '已儲存 ✓';
-        saveBtn.classList.add('saved-flash');
-        setTimeout(() => {
-          saveBtn.textContent = '儲存變更';
-          saveBtn.classList.remove('saved-flash');
-        }, 1500);
+      const indicator = $('#autosave-indicator');
+      if (indicator) {
+        indicator.textContent = '已儲存 ✓';
+        indicator.classList.add('visible');
+        clearTimeout(indicator._timer);
+        indicator._timer = setTimeout(() => indicator.classList.remove('visible'), 2000);
       }
+      // Debounced canvas re-render so node cards reflect edits
+      clearTimeout(window._autoSaveRenderTimer);
+      window._autoSaveRenderTimer = setTimeout(() => render(), 400);
     }
 
     ['#edit-topic', '#edit-cta', '#edit-user'].forEach(sel => {
       const el = $(sel);
       if (el) el.addEventListener('blur', autoSaveNode);
     });
-    ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main'].forEach(sel => {
+    ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main', '#edit-status'].forEach(sel => {
       const el = $(sel);
       if (el) el.addEventListener('change', autoSaveNode);
     });
@@ -1680,6 +1904,7 @@ function renderPanel() {
       ).join('');
       connList.querySelectorAll('.conn-remove').forEach(btn => {
         btn.addEventListener('click', () => {
+          pushUndo();
           state.connections = state.connections.filter(c =>
             !(c.from === btn.dataset.from && c.to === btn.dataset.to)
           );
@@ -1701,6 +1926,7 @@ function renderPanel() {
     $('#btn-add-conn').addEventListener('click', () => {
       const targetId = connTarget.value;
       if (!targetId) return;
+      pushUndo();
       state.connections.push({ from: node.id, to: targetId });
       saveState();
       render();
@@ -1985,6 +2211,16 @@ function onDragEnd() {
     const el = $(`.node-card[data-node-id="${ds.nodeId}"]`);
     if (el) el.classList.remove('dragging');
     if (ds.moved) {
+      // Build pre-drag snapshot using saved original position
+      const snapNodes = [...state.nodes.entries()].map(([k, v]) => {
+        const copy = JSON.parse(JSON.stringify(v));
+        if (k === ds.nodeId) copy.positions.topic = { x: ds.origX, y: ds.origY };
+        return [k, copy];
+      });
+      state.undoStack.push({ nodes: snapNodes, connections: JSON.parse(JSON.stringify(state.connections)) });
+      if (state.undoStack.length > MAX_UNDO) state.undoStack.shift();
+      state.redoStack = [];
+      updateUndoButtons();
       resolveCollisions(ds.nodeId);
       saveState();
       renderConnections($('#connections-svg'));
@@ -2005,6 +2241,7 @@ function handleConnectClick(nodeId) {
       c => (c.from === state.connectFrom && c.to === nodeId) || (c.from === nodeId && c.to === state.connectFrom)
     );
     if (!exists) {
+      pushUndo();
       state.connections.push({ from: state.connectFrom, to: nodeId });
       saveState();
       // Trigger causal chain reasoning
@@ -2740,101 +2977,102 @@ function showReviewPanel(suggestions, aiReview) {
     html += `<div class="ai-review-loading">🤖 AI 策略分析載入中...</div>`;
   }
 
-  html += `<div class="review-summary">找到 ${suggestions.length} 個結構建議</div>`;
+  if (suggestions.length > 0) html += `<div class="review-summary">找到 ${suggestions.length} 個結構建議</div>`;
 
-  if (restructSugs.length > 0) {
-    html += `<div class="review-section-title">🔄 建議調整架構</div>`;
-    for (const s of restructSugs) {
-      html += `
-        <div class="review-card review-card-restructure" data-ghost-id="${s.id}">
-          <div class="review-card-topic">主節點建議換成「${esc(s.newMainTopic)}」</div>
-          <div class="review-card-changes">
-            <div class="change-item change-promote">⬆ ${esc(s.newMainTopic)} → 主節點 · ${JOURNEY_LABELS[s.suggestedNewMainStage]}</div>
-            <div class="change-item change-demote">⬇ ${esc(s.oldMainTopic)} → 子節點 · ${JOURNEY_LABELS[s.suggestedOldMainStage]}</div>
-          </div>
-          <div class="review-card-reason">${esc(s.reason)}</div>
-          <div class="review-card-actions">
-            <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">調整</button>
-            <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">維持原樣</button>
-          </div>
-        </div>`;
-    }
+  // Priority grouping: high → restructure; medium → new-node, connection; low → fill, update
+  const highSugs = restructSugs;
+  const medSugs = [...nodeSugs, ...connSugs];
+  const lowSugs = [...fillSugs, ...updateSugs];
+
+  const renderRestructCard = (s) => `
+    <div class="review-card review-card-restructure" data-ghost-id="${s.id}">
+      <div class="review-card-topic">主節點建議換成「${esc(s.newMainTopic)}」</div>
+      <div class="review-card-changes">
+        <div class="change-item change-promote">⬆ ${esc(s.newMainTopic)} → 主節點 · ${JOURNEY_LABELS[s.suggestedNewMainStage]}</div>
+        <div class="change-item change-demote">⬇ ${esc(s.oldMainTopic)} → 子節點 · ${JOURNEY_LABELS[s.suggestedOldMainStage]}</div>
+      </div>
+      <div class="review-card-reason">${esc(s.reason)}</div>
+      <div class="review-card-actions">
+        <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">調整</button>
+        <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">維持原樣</button>
+      </div>
+    </div>`;
+
+  const renderNodeCard = (s) => `
+    <div class="review-card" data-ghost-id="${s.id}">
+      <div class="review-card-topic">${esc(s.topic)}</div>
+      <div class="review-card-meta">
+        <span class="job-badge ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[s.job] || ''}">${esc(s.job)}</span>
+        <span class="cross-badge">${JOURNEY_LABELS[s.stage]}</span>
+        <span class="cross-badge">${MATERIAL_LABELS[s.material]}</span>
+      </div>
+      <div class="review-card-reason">${esc(s.reason)}</div>
+      <div class="review-card-deficit">${esc(s.deficit || '')}</div>
+      <div class="review-card-actions">
+        <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">採用</button>
+        <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
+      </div>
+    </div>`;
+
+  const renderConnCard = (s) => `
+    <div class="review-card" data-ghost-id="${s.id}">
+      <div class="review-card-topic">${esc(s.fromTopic)} → ${esc(s.toTopic)}</div>
+      <div class="review-card-reason">${esc(s.reason)}</div>
+      <div class="review-card-actions">
+        <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">連線</button>
+        <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
+      </div>
+    </div>`;
+
+  const renderFillCard = (s) => {
+    const jobClass = {'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[s.fills?.job] || '';
+    return `<div class="review-card" data-ghost-id="${s.id}">
+      <div class="review-card-topic">${esc(s.nodeTopic)}</div>
+      <div class="review-card-meta">
+        ${s.fills?.job ? `<span class="job-badge ${jobClass}">→ ${esc(s.fills.job)}</span>` : ''}
+        ${s.suggestedStage ? `<span class="cross-badge">→ ${JOURNEY_LABELS[s.suggestedStage]}</span>` : ''}
+        ${s.fills?.cta ? `<span class="cross-badge">CTA: ${esc(s.fills.cta)}</span>` : ''}
+      </div>
+      <div class="review-card-reason">${esc(s.reason)}</div>
+      <div class="review-card-actions">
+        <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">套用</button>
+        <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
+      </div>
+    </div>`;
+  };
+
+  const renderUpdateCard = (s) => `
+    <div class="review-card review-card-promo" data-ghost-id="${s.id}">
+      <div class="review-card-topic">${esc(s.nodeTopic)}</div>
+      <div class="review-card-changes">
+        <div class="change-item change-promote">CTA 加入：${esc(s.suggestedCtaAppend)}</div>
+        <div class="change-item change-promote">備註加入：${esc(s.suggestedUserAppend)}</div>
+      </div>
+      <div class="review-card-reason">${esc(s.reason)}</div>
+      <div class="review-card-actions">
+        <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">套用</button>
+        <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
+      </div>
+    </div>`;
+
+  if (highSugs.length > 0) {
+    html += `<div class="review-priority-header priority-high">🔴 高優先 — 影響整體策略</div>`;
+    html += highSugs.map(renderRestructCard).join('');
   }
 
-  if (updateSugs.length > 0) {
-    html += `<div class="review-section-title">📢 促銷活動連動更新</div>`;
-    for (const s of updateSugs) {
-      html += `
-        <div class="review-card review-card-promo" data-ghost-id="${s.id}">
-          <div class="review-card-topic">${esc(s.nodeTopic)}</div>
-          <div class="review-card-changes">
-            <div class="change-item change-promote">CTA 加入：${esc(s.suggestedCtaAppend)}</div>
-            <div class="change-item change-promote">備註加入：${esc(s.suggestedUserAppend)}</div>
-          </div>
-          <div class="review-card-reason">${esc(s.reason)}</div>
-          <div class="review-card-actions">
-            <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">套用</button>
-            <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
-          </div>
-        </div>`;
-    }
+  if (medSugs.length > 0) {
+    html += `<div class="review-priority-header priority-med">🟡 中優先 — 補強內容覆蓋</div>`;
+    html += medSugs.map(s => s.type === 'new-node' ? renderNodeCard(s) : renderConnCard(s)).join('');
   }
 
-  if (fillSugs.length > 0) {
-    html += `<div class="review-section-title">✏️ 建議補全現有節點</div>`;
-    for (const s of fillSugs) {
-      const jobClass = {'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[s.fills.job] || '';
-      html += `
-        <div class="review-card" data-ghost-id="${s.id}">
-          <div class="review-card-topic">${esc(s.nodeTopic)}</div>
-          <div class="review-card-meta">
-            ${s.fills.job ? `<span class="job-badge ${jobClass}">→ ${esc(s.fills.job)}</span>` : ''}
-            <span class="cross-badge">→ ${JOURNEY_LABELS[s.suggestedStage]}</span>
-            ${s.fills.cta ? `<span class="cross-badge">CTA: ${esc(s.fills.cta)}</span>` : ''}
-          </div>
-          <div class="review-card-reason">${esc(s.reason)}</div>
-          <div class="review-card-actions">
-            <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">套用</button>
-            <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
-          </div>
-        </div>`;
-    }
-  }
-
-  if (connSugs.length > 0) {
-    html += `<div class="review-section-title">🔗 建議連線</div>`;
-    for (const s of connSugs) {
-      html += `
-        <div class="review-card" data-ghost-id="${s.id}">
-          <div class="review-card-topic">${esc(s.fromTopic)} → ${esc(s.toTopic)}</div>
-          <div class="review-card-reason">${esc(s.reason)}</div>
-          <div class="review-card-actions">
-            <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">連線</button>
-            <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
-          </div>
-        </div>`;
-    }
-  }
-
-  if (nodeSugs.length > 0) {
-    html += `<div class="review-section-title">🧩 建議新增的內容</div>`;
-    for (const s of nodeSugs) {
-      html += `
-        <div class="review-card" data-ghost-id="${s.id}">
-          <div class="review-card-topic">${esc(s.topic)}</div>
-          <div class="review-card-meta">
-            <span class="job-badge ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[s.job] || ''}">${esc(s.job)}</span>
-            <span class="cross-badge">${JOURNEY_LABELS[s.stage]}</span>
-            <span class="cross-badge">${MATERIAL_LABELS[s.material]}</span>
-          </div>
-          <div class="review-card-reason">${esc(s.reason)}</div>
-          <div class="review-card-deficit">${esc(s.deficit || '')}</div>
-          <div class="review-card-actions">
-            <button class="ai-action-btn adopt ghost-adopt" data-ghost-id="${s.id}">採用</button>
-            <button class="ai-action-btn dismiss ghost-dismiss" data-ghost-id="${s.id}">跳過</button>
-          </div>
-        </div>`;
-    }
+  if (lowSugs.length > 0) {
+    html += `
+      <button class="review-low-toggle" data-expanded="false">
+        ⚪ 低優先 — ${lowSugs.length} 項細節建議 ▾
+      </button>
+      <div class="review-low-section" style="display:none">
+        ${lowSugs.map(s => s.type === 'auto-fill' ? renderFillCard(s) : renderUpdateCard(s)).join('')}
+      </div>`;
   }
 
   html += `
@@ -2849,6 +3087,16 @@ function showReviewPanel(suggestions, aiReview) {
     </div>`;
 
   $('#review-content').innerHTML = html;
+
+  // Low-priority toggle
+  document.querySelector('.review-low-toggle')?.addEventListener('click', function () {
+    const section = this.nextElementSibling;
+    const expanded = section.style.display !== 'none';
+    section.style.display = expanded ? 'none' : 'block';
+    this.dataset.expanded = !expanded;
+    const count = lowSugs.length;
+    this.textContent = expanded ? `⚪ 低優先 — ${count} 項細節建議 ▾` : `⚪ 低優先 — ${count} 項細節建議 ▴`;
+  });
 
   // Global ask
   $('#ask-global-btn')?.addEventListener('click', async () => {
@@ -3031,9 +3279,11 @@ function exportAllBriefs() {
   for (const node of nodes) {
     text += `## ${node.main.topic}\n`;
     text += `影片目的：${node.main.job || '未指定'}\n`;
-    text += `階段：${JOURNEY_LABELS[node.positions?.journey?.stage || 'A']}\n`;
+    const stg = node.positions?.journey?.stage;
+    text += `階段：${stg ? JOURNEY_LABELS[stg] : '未分配'}\n`;
     text += `素材：${MATERIAL_LABELS[node.positions?.material?.column || 'long']}\n`;
     text += `準備度：${nodeReadiness(node)}%\n`;
+    if (node.status) text += `製作狀態：${STATUS_LABELS[node.status] || node.status}\n`;
     if (node.main.cta) text += `CTA：${node.main.cta}\n`;
     if (node.isMain) text += `★ 主節點\n`;
     if (node.user) text += `\n備註：\n${node.user}\n`;
@@ -3082,6 +3332,26 @@ function generateBrief() {
 function generateNodeBrief(nodeId) {
   const node = state.nodes.get(nodeId);
   if (!node) return;
+
+  if (!node.aiResearch) {
+    $('#panel-empty').classList.add('hidden');
+    $('#panel-detail').classList.add('hidden');
+    $('#panel-review').classList.add('hidden');
+    $('#panel-brief').classList.remove('hidden');
+    $('#brief-content').innerHTML = `
+      <div class="brief-no-research">
+        <div class="brief-no-research-icon">⚠️</div>
+        <p>這個節點還沒有 AI 研究資料</p>
+        <p class="brief-no-research-hint">先點「✨ AI 擴寫企劃」，才能生成完整的 Brief。</p>
+        <button id="brief-goto-expand" class="expand-btn">前往 AI 擴寫</button>
+      </div>`;
+    document.getElementById('brief-goto-expand')?.addEventListener('click', () => {
+      $('#panel-brief').classList.add('hidden');
+      selectNode(node.id);
+      renderPanel();
+    });
+    return;
+  }
 
   $('#panel-empty').classList.add('hidden');
   $('#panel-detail').classList.add('hidden');
@@ -3323,9 +3593,9 @@ function generateGlobalBrief() {
   $('#panel-brief').classList.remove('hidden');
 
   // Group by stage
-  const stageGroups = { A: [], B: [], C: [], D: [] };
+  const stageGroups = { A: [], B: [], C: [], D: [], '': [] };
   for (const n of nodes) {
-    const s = n.positions.journey?.stage || 'A';
+    const s = n.positions.journey?.stage || '';
     stageGroups[s].push(n);
   }
 
@@ -3582,7 +3852,7 @@ function showViewToast(view) {
     msg = `長片 ${longCount} 支 · 短片 ${shortCount} 支`;
   } else if (view === 'journey') {
     const stages = { A: 0, B: 0, C: 0, D: 0 };
-    nodes.forEach(n => { stages[n.positions?.journey?.stage || 'A']++; });
+    nodes.forEach(n => { const s = n.positions?.journey?.stage; if (s) stages[s]++; });
     const covered = Object.values(stages).filter(v => v > 0).length;
     msg = `${covered}/4 個階段有覆蓋`;
   } else if (view === 'topic') {
@@ -3696,11 +3966,18 @@ function bindEvents() {
   });
 
   // Topic sub-tabs (free / list)
-  $$('#topic-toolbar .sub-tab').forEach(t => {
+  $$('#topic-toolbar .sub-tab[data-mode]').forEach(t => {
     t.addEventListener('click', () => {
       state.topicMode = t.dataset.mode;
       render();
     });
+  });
+
+  // Kanban background toggle
+  $('#btn-kanban-bg')?.addEventListener('click', () => {
+    state.showKanbanBg = !state.showKanbanBg;
+    $('#btn-kanban-bg').classList.toggle('active', state.showKanbanBg);
+    render();
   });
 
   // Zoom controls
@@ -3811,6 +4088,7 @@ function bindEvents() {
             c => (c.from === fromId && c.to === toId) || (c.from === toId && c.to === fromId)
           );
           if (!exists) {
+            pushUndo();
             state.connections.push({ from: fromId, to: toId });
             saveState();
             render();
@@ -3822,6 +4100,7 @@ function bindEvents() {
     }
   });
 
+  $('#btn-export').addEventListener('click', exportAllBriefs);
   $('#btn-review').addEventListener('click', runGlobalReview);
   $('#btn-brief').addEventListener('click', generateBrief);
   $('#btn-auto-arrange')?.addEventListener('click', autoArrangeNodes);
@@ -3847,7 +4126,28 @@ function bindEvents() {
     $('#panel-empty').classList.remove('hidden');
   });
 
+  document.getElementById('btn-undo')?.addEventListener('click', undo);
+  document.getElementById('btn-redo')?.addEventListener('click', redo);
+
+  document.querySelector('.guide-close-btn')?.addEventListener('click', () => {
+    localStorage.setItem('guide_dismissed', '1');
+    const steps = document.getElementById('onboarding-steps');
+    if (steps) steps.style.display = 'none';
+  });
+
   document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+      e.preventDefault();
+      redo();
+      return;
+    }
     if (e.key === 'Escape') {
       const helpEl = document.getElementById('shortcut-overlay');
       if (helpEl && !helpEl.classList.contains('hidden')) {
@@ -4084,5 +4384,13 @@ async function init() {
   }
 }
 init();
+
+fetch('/api/version').then(r => r.json()).then(v => {
+  const el = document.getElementById('version-badge');
+  if (!el) return;
+  const date = v.time ? v.time.replace('T', ' ').substring(0, 16) + ' UTC' : '';
+  el.textContent = `${v.env} · ${v.commit}${date ? ' · ' + date : ''}`;
+  el.title = `環境: ${v.env}\nCommit: ${v.commit}\n時間: ${v.time || ''}`;
+}).catch(() => {});
 
 window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript, showProjectPicker, hideProjectPicker };

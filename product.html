@@ -17,14 +17,16 @@
         <button id="btn-delete-project" class="project-btn danger" title="刪除此專案">🗑</button>
       </div>
     </div>
-    <nav class="view-tabs">
+    <nav class="view-tabs" title="三個視圖是同一批影片，換角度看">
       <button data-view="topic" class="tab active" title="規劃影片主題和排列順序">議題順序</button>
       <button data-view="material" class="tab" title="分配長片和短片格式">素材準備</button>
       <button data-view="journey" class="tab" title="檢查每個購買階段是否都有影片覆蓋">購買階段</button>
     </nav>
+    <span class="view-tabs-note" title="三個視圖顯示同一批影片，只是換角度看">同一批影片・三種視角</span>
     <div class="header-right">
       <span id="node-count">0 個節點</span>
-      <button id="btn-connect" class="header-btn" title="連線模式">🔗</button>
+      <button id="btn-connect" class="header-btn header-btn-dim" title="連線模式">🔗</button>
+      <button id="btn-export" class="header-btn" title="匯出所有節點為 Markdown">↓ 匯出</button>
       <button id="btn-review" class="header-btn review-btn" title="AI 全局檢討">🧩 檢討</button>
       <button id="btn-brief" class="header-btn primary">生成 Brief</button>
       <button id="btn-help" class="header-btn help-btn" title="鍵盤快捷鍵 (?)">?</button>
@@ -37,6 +39,11 @@
         <div class="sub-tabs">
           <button class="sub-tab active" data-mode="free">自由區塊</button>
           <button class="sub-tab" data-mode="list">條列</button>
+          <button id="btn-kanban-bg" class="sub-tab kanban-bg-toggle" title="顯示購買階段欄位背景">⊞ 階段欄</button>
+        </div>
+        <div class="undo-redo-btns">
+          <button id="btn-undo" class="toolbar-icon-btn" title="復原 (Ctrl+Z)" disabled>↩</button>
+          <button id="btn-redo" class="toolbar-icon-btn" title="重做 (Ctrl+Y)" disabled>↪</button>
         </div>
         <div id="zoom-controls">
           <button id="zoom-out" title="縮小">−</button>
@@ -67,7 +74,10 @@
           <p class="empty-title">點選節點查看詳情</p>
           <p class="hint">雙擊畫布或按「＋」新增節點</p>
           <div class="onboarding-steps" id="onboarding-steps">
-            <p class="onboarding-label">快速上手流程</p>
+            <div class="onboarding-steps-header">
+              <p class="onboarding-label">快速上手流程</p>
+              <button class="guide-close-btn" title="不再顯示">✕</button>
+            </div>
             <ol>
               <li><strong>建立節點</strong> — 每支影片一個節點，填入主題和目的</li>
               <li><strong>議題順序</strong> — 拖曳排列影片順序，點 🔗 串連相關影片</li>
@@ -189,6 +199,8 @@
       <p style="font-size:11px;color:#94a3b8;margin-top:12px;text-align:center">按 <kbd>?</kbd> 或 <kbd>Esc</kbd> 關閉</p>
     </div>
   </div>
+
+  <div id="version-badge" class="version-badge"></div>
 
   <script>
   (function(){
