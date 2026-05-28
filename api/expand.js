@@ -9,7 +9,39 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { topic, userNotes, job, existingNodes, action, hook, angles, research } = req.body;
+    const { topic, userNotes, job, existingNodes, action, hook, angles, research, hookDirection } = req.body;
+
+    // Hooks-only regeneration with direction refinement
+    if (action === 'hooks') {
+      const hooksPrompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的 Hook 策略師。
+
+影片主題：${topic}
+${job ? `影片目的：${job}` : ''}
+${userNotes ? `使用者備註：${userNotes}` : ''}
+${hookDirection ? `🔴 使用者的調整方向（最優先）：${hookDirection}` : ''}
+
+請根據以上資訊產出 3 個差異夠大的 Hook 開場。
+每個 Hook 15 字以內，可直接當影片前 3 秒的旁白。
+
+請用繁體中文，以 JSON 格式回傳（不要加 markdown code block）：
+{
+  "hooks": [
+    { "style": "Hook 風格名稱", "text": "Hook 文字（15字以內）" },
+    { "style": "Hook 風格名稱", "text": "Hook 文字（15字以內）" },
+    { "style": "Hook 風格名稱", "text": "Hook 文字（15字以內）" }
+  ]
+}`;
+
+      const hooksMsg = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 400,
+        messages: [{ role: 'user', content: hooksPrompt }],
+      });
+      addUsage('expand', hooksMsg.usage.input_tokens, hooksMsg.usage.output_tokens);
+      const hooksText = hooksMsg.content[0].text.trim();
+      const hooksClean = hooksText.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+      return res.status(200).json(JSON.parse(hooksClean));
+    }
 
     // Titles action — separate lightweight prompt
     if (action === 'titles') {

@@ -1740,6 +1740,10 @@ function renderPanel() {
             <button class="hook-use-btn ai-action-btn adopt" data-hook-idx="${i}"${sel ? ' disabled' : ''}>${sel ? '✓ 已選用' : '選用'}</button>
           </div>`;
         }).join('')}
+        <div class="inline-refine-block">
+          <textarea class="inline-refine-input" id="hook-refine-input" rows="2" placeholder="想調整 Hook 方向？例：我想要更有攻擊性、去掉懸念型、強調騎士身份認同…"></textarea>
+          <button class="inline-refine-btn" id="hook-refine-btn">重新生成 Hook ↺</button>
+        </div>
       </details>
       ` : (research?.suggestedHook ? `
       <div class="detail-divider"></div>
@@ -2040,6 +2044,37 @@ function renderPanel() {
         saveState();
         renderPanel(node);
       });
+    });
+
+    // Hook inline refinement — regenerate hooks with user direction
+    $('#hook-refine-btn')?.addEventListener('click', async () => {
+      const direction = $('#hook-refine-input')?.value?.trim();
+      if (!direction) return;
+      const btn = $('#hook-refine-btn');
+      btn.disabled = true;
+      btn.textContent = '生成中…';
+      try {
+        const res = await fetch('/api/expand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'hooks',
+            topic: node.main.topic,
+            job: node.main.job,
+            userNotes: node.user,
+            hookDirection: direction,
+          }),
+        });
+        const data = await res.json();
+        if (data.hooks?.length > 0) {
+          node.hooks = data.hooks;
+          saveState();
+          renderPanel(node);
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = '重新生成 Hook ↺';
+      }
     });
 
     // Apply suggested CTA directly to node.main.cta
@@ -4058,7 +4093,7 @@ async function runParseFlow(input) {
 
   try {
     const result = await callParseApi(input);
-    renderParseResult(result);
+    renderParseResult(result, input);
   } catch (err) {
     $('#parse-content').innerHTML = `<div class="panel-error">解讀失敗：${esc(err.message)}</div>`;
   }
@@ -4077,7 +4112,7 @@ async function callParseApi(input) {
   return res.json();
 }
 
-function renderParseResult(parseResult) {
+function renderParseResult(parseResult, originalInput = '') {
   const directionLabels = { 'product-led': '從產品出發', 'content-led': '從內容出發', 'no-product': '純內容' };
   const roleLabels = { 'main': '主影片', 'child': '剪片', 'sibling': '系列', 'standalone': '獨立' };
   const formatIcon = { 'long': '📹', 'short': '📱' };
@@ -4138,13 +4173,36 @@ function renderParseResult(parseResult) {
     html += `<div class="parse-missing">⚠ ${esc(parseResult.missingInfo)}</div>`;
   }
 
-  const count = parseResult.videos?.length || 0;
+  html += `<div class="parse-refine-block">
+    <label class="parse-refine-label">想調整這個規劃？</label>
+    <textarea id="parse-refine-input" class="parse-refine-textarea" rows="2" placeholder="例：我想要更多短片、把前兩支合成一支、主力放在 A 認知階段…"></textarea>
+    <button class="parse-refine-btn" id="parse-rerun-btn">重新解讀 ↺</button>
+  </div>`;
+
   html += `<div class="parse-confirm-row">
     <button class="parse-cancel-btn" id="parse-cancel-nodes">取消</button>
     <button class="parse-confirm-btn" id="parse-confirm-nodes">確認，建立節點 →</button>
   </div>`;
 
   $('#parse-content').innerHTML = html;
+
+  document.getElementById('parse-rerun-btn').addEventListener('click', async () => {
+    const refinement = document.getElementById('parse-refine-input').value.trim();
+    if (!refinement) return;
+    const combinedInput = originalInput
+      ? `${originalInput}\n\n調整方向：${refinement}`
+      : refinement;
+    hideAllPanels();
+    const panel = $('#panel-parse');
+    panel.classList.remove('hidden');
+    $('#parse-content').innerHTML = '<div class="panel-loading">AI 重新解讀中…</div>';
+    try {
+      const result = await callParseApi(combinedInput);
+      renderParseResult(result, combinedInput);
+    } catch (err) {
+      $('#parse-content').innerHTML = `<div class="panel-error">解讀失敗：${esc(err.message)}</div>`;
+    }
+  });
 
   document.getElementById('parse-confirm-nodes').addEventListener('click', () => {
     const checkedGaps = [...document.querySelectorAll('.parse-gap-check:checked')]
@@ -4215,14 +4273,10 @@ async function divergeFromNode(nodeId) {
 
   try {
     const result = await callParseApi(seedInput);
-    // Filter out videos too similar to current node
     if (result.videos) {
-      result.videos = result.videos.filter(v =>
-        v.topic.trim() !== node.main.topic.trim()
-      );
+      result.videos = result.videos.filter(v => v.topic.trim() !== node.main.topic.trim());
     }
-    result._divergeMode = true;
-    renderParseResult(result);
+    renderParseResult(result, seedInput);
   } catch (err) {
     $('#parse-content').innerHTML = `<div class="panel-error">發散失敗：${esc(err.message)}</div>`;
   }
