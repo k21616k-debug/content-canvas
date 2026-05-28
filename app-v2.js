@@ -3052,7 +3052,10 @@ function showReviewPanel(suggestions, aiReview) {
           <div class="review-card review-card-quickwin">
             <div class="review-card-topic">✅ ${esc(qw.action)}</div>
             <div class="review-card-reason">${esc(qw.why)}</div>
-            ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}" data-node-id="${_rNodes[qw.targetNodeIndex - 1]?.id || ''}">→ 前往節點</button>` : ''}
+            <div class="review-card-actions">
+              ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}" data-node-id="${_rNodes[qw.targetNodeIndex - 1]?.id || ''}">→ 前往節點</button>` : ''}
+              <button class="ai-action-btn discuss qw-discuss-btn" data-context="${esc(qw.action)}">💬 討論</button>
+            </div>
           </div>`;
       }
     }
@@ -3090,6 +3093,9 @@ function showReviewPanel(suggestions, aiReview) {
             <div class="review-card-reason">${esc(issue.detail)}</div>
             <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
             ${newNodeHtml}${mergeHtml}${removeHtml}
+            <div class="review-card-actions">
+              <button class="ai-action-btn discuss review-discuss-btn" data-context="${esc(issue.title + '：' + issue.suggestion)}">💬 討論</button>
+            </div>
           </div>`;
       };
       const MAX_AI_ISSUES = 5;
@@ -3352,6 +3358,20 @@ function showReviewPanel(suggestions, aiReview) {
       render();
       btn.textContent = '已移除 ✓';
       btn.disabled = true;
+    });
+  });
+
+  // Discuss buttons: pre-fill global ask input with card context
+  $$('.qw-discuss-btn, .review-discuss-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ctx = btn.dataset.context || '';
+      const input = $('#ask-global-input');
+      if (!input) return;
+      input.value = `關於「${ctx}」，`;
+      $('#ask-global-result').innerHTML = '';
+      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
     });
   });
 }

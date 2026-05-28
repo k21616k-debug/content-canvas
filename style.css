@@ -397,6 +397,8 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 .ai-action-btn.adopt:hover { background: rgba(16,185,129,0.25); }
 .ai-action-btn.dismiss { color: #94a3b8; }
 .ai-action-btn.dismiss:hover { background: rgba(239,68,68,0.15); color: var(--danger); }
+.ai-action-btn.discuss { color: #6366f1; }
+.ai-action-btn.discuss:hover { background: rgba(99,102,241,0.12); }
 .ai-loading { font-size: 11px; color: var(--text-muted); font-style: italic; }
 
 /* Panel */
