@@ -6,6 +6,8 @@ import expandHandler from './api/expand.js';
 import reviewHandler from './api/review.js';
 import askHandler from './api/ask.js';
 import planHandler from './api/plan.js';
+import briefHandler from './api/brief.js';
+import classifyHandler from './api/classify.js';
 import { getUsage } from './api/_usage.js';
 
 const GIT_HASH = (() => {
@@ -83,6 +85,14 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/api/ask') {
     await routeApi(askHandler, req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/brief') {
+    await routeApi(briefHandler, req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/classify') {
+    await routeApi(classifyHandler, req, res);
     return;
   }
 

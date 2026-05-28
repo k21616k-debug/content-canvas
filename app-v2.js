@@ -1817,11 +1817,12 @@ function renderPanel() {
       ${(research || angles.length > 0) ? `
       <div class="detail-divider"></div>
       <div class="ai-actions-section">
-        ${research?.suggestedCta ? `
+        ${research?.ctaSpoken ? `
         <div class="angle-card angle-cta">
-          <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 影片結尾叫觀眾做的事</span></div>
-          <div class="angle-reason">${esc(research.suggestedCta)}</div>
-          <button class="ai-action-btn adopt cta-apply-btn" id="btn-apply-cta"${node.main.cta === research.suggestedCta ? ' disabled' : ''}>${node.main.cta === research.suggestedCta ? '✓ 已套用' : '套用為我的 CTA'}</button>
+          <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 口播這句（15字以內）</span></div>
+          <div class="angle-reason">「${esc(research.ctaSpoken)}」</div>
+          ${research.ctaStrategy ? `<div class="brief-shot-how" style="margin-top:4px;font-size:12px;color:#475569">策略：${esc(research.ctaStrategy)}</div>` : ''}
+          <button class="ai-action-btn adopt cta-apply-btn" id="btn-apply-cta"${node.main.cta === research.ctaSpoken ? ' disabled' : ''}>${node.main.cta === research.ctaSpoken ? '✓ 已套用' : '套用為我的 CTA'}</button>
         </div>` : ''}
         <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果到備註</button>
         <button class="expand-btn" id="btn-titles" style="margin-top:6px">🎬 YouTube 標題建議</button>
@@ -2088,7 +2089,7 @@ function renderPanel() {
 
     // Apply suggested CTA directly to node.main.cta
     $('#btn-apply-cta')?.addEventListener('click', () => {
-      const cta = node.aiResearch?.suggestedCta;
+      const cta = node.aiResearch?.ctaSpoken;
       if (!cta) return;
       node.main.cta = cta;
       saveState();
@@ -2160,8 +2161,8 @@ function renderPanel() {
         parts.push('產品細節拍攝：');
         node.detailShots.forEach(d => parts.push(`- ${d.what}：${d.why}`));
       }
-      if (node.aiResearch?.suggestedCta) {
-        node.main.cta = node.aiResearch.suggestedCta;
+      if (node.aiResearch?.ctaSpoken) {
+        node.main.cta = node.aiResearch.ctaSpoken;
       }
       if (node.ecosystemNotes) {
         parts.push(`影片關聯：${node.ecosystemNotes}`);
@@ -2541,7 +2542,7 @@ function mockExpand(topic, userNotes) {
       features: userNotes || '（請補充產品特色）',
       audienceCares: '品質、價格、實用性',
       searchKeywords: `${topic}推薦、${topic}評測、${topic}怎麼選`,
-      suggestedCta: `你用過${topic}嗎？留言分享你的經驗`,
+      ctaSpoken: `你用過${topic}嗎？留言分享你的經驗`,
     },
     hooks: [
       { style: '好奇缺口', text: `關於${topic}，你可能不知道的三件事` },
@@ -2964,9 +2965,9 @@ function analyzeCanvas() {
     });
     if (!hasClip) {
       suggestions.push({
-        id: 'ghost_clip_' + ln.id,
-        type: 'new-node',
-        topic: `${ln.main.topic.substring(0, 15)}… 精華剪輯`,
+        id: 'ghost_clip_' + ln.id + '_' + Math.random().toString(36).slice(2, 6),
+        type: 'clip',
+        topic: `${ln.main.topic} 精華剪輯`,
         job: '吸引',
         cta: '看完整評測',
         stage: 'A',
@@ -2996,6 +2997,7 @@ async function runGlobalReview() {
       stage: n.positions.journey?.stage, isMain: n.isMain,
       hook: n.aiResearch?.suggestedHook || '',
       angles: (n.filmingAngles || []).map(a => a.title).join('、'),
+      userNotes: n.user ? n.user.trim().substring(0, 120) : '',
       hasUserNotes: !!(n.user && n.user.trim()),
       hasResearch: !!n.aiResearch,
     }));
@@ -3398,7 +3400,7 @@ function showReviewPanel(suggestions, aiReview) {
       const ctx = btn.dataset.context || '';
       const input = $('#ask-global-input');
       if (!input) return;
-      input.value = `關於「${ctx}」，`;
+      input.value = `針對這個建議 — ${ctx}\n\n我的問題：`;
       $('#ask-global-result').innerHTML = '';
       input.scrollIntoView({ behavior: 'smooth', block: 'center' });
       input.focus();
@@ -3661,7 +3663,7 @@ function generateNodeBrief(nodeId) {
   ).join('\n\n');
   if (r?.features) nonNeg += (nonNeg ? '\n\n' : '') + '產品特色：' + r.features;
   let framework = linked.map(l => `${l.dir} ${l.topic}`).join('\n');
-  const ctaText = node.main.cta || r?.suggestedCta || '';
+  const ctaText = node.main.cta || r?.ctaSpoken || '';
   const shortClips = confirmedAngles.length > 0
     ? confirmedAngles.slice(0, 2).map(a => `「${a.title}」(${a.why})`).join('；')
     : (allAngles.length > 0 ? `（拍完後從 ${allAngles.length} 個拍攝方向中挑選）` : '');

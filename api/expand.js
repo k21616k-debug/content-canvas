@@ -126,7 +126,8 @@ JSON，不要加 markdown code block：
     "insight": "這支影片為什麼值得拍——你的角度和市場上已有的有什麼不同，觀眾為什麼要看你而不是別人。如果你對市場現況不確定，說出來",
     "audienceCares": "目標觀眾最在意的 3 件事（具體到可以當影片段落標題）",
     "searchKeywords": "3-5 個 YouTube 搜尋關鍵字（長尾詞，觀眾會打什麼就寫什麼）",
-    "suggestedCta": "觀眾看完要做什麼（具體行動，不是「歡迎留言」）",
+    "ctaSpoken": "觀眾看完，你口播的那一句話。15 字以內，直接說出口的句子，不要加任何解釋或說明",
+    "ctaStrategy": "CTA 的策略說明：這個 CTA 為什麼有效、怎麼搭配影片末尾使用（這欄不會出現在影片中）",
     "suggestedHook": "前三秒旁白，15 字以內，能讓目標觀眾停止滑動",
     "confidence": "high|medium|low",
     "aiNeeds": "如果 confidence 是 medium 或 low，具體缺什麼資訊才能讓建議更準確。high 就給空字串"
@@ -155,8 +156,9 @@ JSON，不要加 markdown code block：
 
 - angles 給 4-5 個。如果使用者有具體方向，至少 2 個必須根據使用者方向延伸
 - insight 是最重要的欄位。「介紹產品特色」是廢話，要說出具體的差異化角度
-- confidence 要誠實：high = 你有足夠知識推導，low = 大部分是推測
-- detailShots：product 型給 4 個以上；concept 型可以不給
+- confidence 要誠實：high = 你有足夠知識推導，low = 大部分是推測；如果使用者沒有提供任何產品筆記（userNotes 為空），confidence 必須是 "low"，不允許升為 medium 或 high
+- ctaSpoken 必須 15 字以內，可以直接口播的那一句話，例：「留言告訴我你用哪種包」「連結在資訊欄下方」。不要是策略說明，不要包含「告訴觀眾」「影片結尾」等製作描述
+- detailShots：product 型給 4 個以上；concept 型可以不給；comparison 型（多品比較）每個品牌給 2-3 個
 - hooks 3 個風格差異要夠大，不能只是換詞，每個在 15 字以內`;
 
     const msg = await anthropic.messages.create({

@@ -20,6 +20,7 @@ export default async function handler(req, res) {
       if (n.hook) parts.push(`Hook=${n.hook}`);
       if (n.isMain) parts.push('★主節點');
       if (n.angles) parts.push(`拍攝角度：${n.angles}`);
+      if (n.userNotes) parts.push(`筆記摘要=${n.userNotes.substring(0, 120)}`);
       if (!n.hasUserNotes && !n.hasResearch) parts.push('⚠️知識空洞');
       else if (!n.hasResearch) parts.push('未做AI擴寫');
       return parts.join(' | ');
