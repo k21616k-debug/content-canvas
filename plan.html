@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>內容計劃 — 摩托麻吉</title>
+  <link rel="stylesheet" href="plan.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <a href="index.html" class="back-link" title="回首頁">←</a>
+      <span class="logo">🎯</span>
+      <div class="project-switcher">
+        <select id="project-select"></select>
+        <button id="btn-new-project" title="新增專案">＋</button>
+        <button id="btn-delete-project" class="danger" title="刪除此專案">🗑</button>
+      </div>
+    </div>
+    <div class="header-right">
+      <span id="plan-status"></span>
+    </div>
+  </header>
+
+  <div id="input-area">
+    <textarea id="main-input" rows="3" placeholder="告訴我你的目標、產品、限制、任何想法&#10;例：我要賣 SOL 背包，有軟包硬包防水包三種，想讓觀眾能買到適合他們的那一款"></textarea>
+    <div class="input-actions">
+      <div id="fragment-chips"></div>
+      <button id="btn-generate" class="primary-btn">生成計劃 →</button>
+    </div>
+  </div>
+
+  <div id="plan-area">
+    <div id="plan-loading" class="hidden">
+      <div class="loading-spinner"></div>
+      <span>AI 推導中…</span>
+    </div>
+
+    <div id="plan-content" class="hidden">
+      <div id="plan-reasoning-block">
+        <div class="reasoning-label">AI 的推導邏輯</div>
+        <div id="plan-reasoning-text"></div>
+      </div>
+
+      <div id="ai-questions-block" class="hidden">
+        <div class="questions-label">💬 AI 需要你回答</div>
+        <div id="ai-questions-list"></div>
+      </div>
+
+      <div id="video-grid"></div>
+
+      <div id="portfolio-note-block">
+        <div class="portfolio-label">整體策略</div>
+        <div id="portfolio-note-text"></div>
+      </div>
+    </div>
+
+    <div id="plan-empty">
+      <div class="plan-empty-inner">
+        <div class="plan-empty-icon">🎯</div>
+        <p>在上方輸入你的目標，AI 幫你推導完整的影片計劃</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video detail panel -->
+  <div id="video-panel" class="hidden">
+    <div class="panel-header">
+      <button id="panel-close">← 返回</button>
+      <button id="btn-confirm-video" class="confirm-btn">✓ 確認這支，生成 Brief</button>
+    </div>
+    <div id="panel-body"></div>
+  </div>
+
+  <!-- Brief overlay -->
+  <div id="brief-overlay" class="hidden">
+    <div class="brief-modal">
+      <div class="brief-modal-header">
+        <span>📋 Brief</span>
+        <button id="brief-close">✕</button>
+      </div>
+      <div id="brief-body"></div>
+      <button id="btn-copy-brief" class="copy-btn">複製 Brief</button>
+    </div>
+  </div>
+
+  <!-- Project picker -->
+  <div id="project-picker" class="hidden">
+    <div class="picker-container">
+      <div class="picker-top">
+        <a href="index.html" class="picker-back">← 回首頁</a>
+      </div>
+      <div class="picker-header">
+        <span>🎯</span>
+        <h2>內容計劃 — 選擇專案</h2>
+      </div>
+      <div id="picker-list"></div>
+      <button id="picker-new" class="picker-new-btn">＋ 新增專案</button>
+    </div>
+  </div>
+
+  <div id="version-badge"></div>
+
+  <script>
+    if (sessionStorage.getItem('canvas-auth') !== 'ok') {
+      window.location.href = 'index.html';
+    }
+  </script>
+  <script type="module" src="plan-app.js"></script>
+</body>
+</html>
