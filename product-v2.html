@@ -120,15 +120,26 @@
     </aside>
   </main>
 
-  <!-- Node creation modal - v2 parse flow -->
+  <!-- Node creation modal -->
   <div id="modal-overlay" class="hidden">
-    <div id="modal" class="modal-parse">
-      <h3>描述你的影片規劃</h3>
-      <p class="modal-parse-hint">把你想做的內容寫下來，不需要格式，AI 會幫你拆解成節點</p>
-      <textarea id="input-parse" rows="6" placeholder="例：我拿到了三款騎士背包，想做一個比較影片。主要想強調舒適度、置物空間、和防水性能的差異。另外每款包各做一支短片介紹最大亮點，讓粉絲快速了解差異。" autocomplete="off"></textarea>
+    <div id="modal" class="modal-add-node">
+      <h3>新增影片節點</h3>
+      <div class="modal-field">
+        <label class="modal-label">購買旅程階段</label>
+        <div class="modal-stage-btns">
+          <button type="button" class="modal-stage-btn" data-stage="A">A 認知</button>
+          <button type="button" class="modal-stage-btn" data-stage="B">B 評估</button>
+          <button type="button" class="modal-stage-btn" data-stage="C">C 信任</button>
+          <button type="button" class="modal-stage-btn" data-stage="D">D 安心</button>
+        </div>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">影片主題</label>
+        <input type="text" id="input-topic" placeholder="例：SOL 防水包 vs 軟包 完整比較" autocomplete="off">
+      </div>
       <div class="modal-actions">
         <button type="button" id="modal-cancel">取消</button>
-        <button type="button" id="modal-parse-btn" class="primary">AI 解讀 →</button>
+        <button type="button" id="modal-add-btn" class="primary">新增節點 →</button>
       </div>
     </div>
   </div>

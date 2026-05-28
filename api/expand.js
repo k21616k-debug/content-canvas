@@ -85,95 +85,83 @@ ${angles ? `拍攝角度：${angles.map(a => a.title).join('、')}` : ''}
       return res.status(200).json(JSON.parse(titlesClean));
     }
 
-    // Build existing nodes context for ecosystem awareness
+    const { stage } = req.body;
+    const STAGE_LABELS = { A: 'A 認知', B: 'B 評估', C: 'C 信任', D: 'D 安心' };
+
     const existingContext = existingNodes?.length > 0
       ? `\n畫布上已有的其他影片：\n${existingNodes.map(n => `- 「${n.topic}」${n.job ? `(${n.job})` : ''}`).join('\n')}\n`
       : '';
 
-    const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的資深內容策略顧問。
+    const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略師。
 
-## 第一步：判斷使用者輸入的類型
+## 工作原則：知識推導，不是文字接龍
 
-使用者輸入：「${topic}」
+每一個建議都必須能回答：「這個判斷的根據是什麼？」
 
-判斷這是哪一種輸入：
-- product：具體產品（含品牌名、型號、產品類型）→ 需要產品研究 + 產品細節拍攝清單
-- concept：概念型內容（怎麼選、什麼是、教學）→ 需要知識架構 + 觀眾痛點
-- pain-point：觀眾痛點或需求（觀眾一直問、大家都想知道）→ 需要先聚焦方向
-- trend：趨勢或話題（最近流行、新發表、爭議）→ 需要時效性角度
+推導這支影片時，你要問自己：
+- 台灣騎士社群對這個主題有什麼具體的知識空白、常見誤解、或爭議？
+- YouTube 上現有的相關內容視角是什麼？這支影片的切入點和那些的差異是什麼？
+- 目標觀眾在什麼具體情境下會需要這支影片？
+- 如果你對這個產品或主題了解不足，你具體缺什麼知識？
 
-## 第二步：使用者的創意方向（最重要）
+如果你不確定，誠實說出來，不要用聽起來合理但沒有根據的建議填滿空白。
 
-${userNotes ? `🔴 使用者已經有想法，你的建議必須以此為基礎延伸，不能忽略：\n「${userNotes}」\n\n使用者寫的每一個具體方向（產品特色、拍攝想法、觀眾痛點）都必須出現在你的建議中。先採納使用者的方向，再補充他沒想到的。` : '使用者還沒有具體方向，請根據主題給出全面建議。'}
-${job ? `影片目的：${job}` : ''}
+## 影片資訊
+
+主題：${topic}
+${stage ? `購買旅程階段：${STAGE_LABELS[stage] || stage}` : ''}
+${job ? `影片目的（在觀眾心中的作用）：${job}` : ''}
+${userNotes ? `🔴 使用者的已知方向（最優先）：\n「${userNotes}」\n\n每一個使用者提到的具體方向都必須出現在建議中。先採納，再補充他沒想到的。` : ''}
 ${existingContext}
 
-## 第三步：產出研究結果
+## 回傳格式
 
-請用繁體中文，以 JSON 格式回傳（不要加 markdown code block）：
+JSON，不要加 markdown code block：
+
 {
   "inputType": "product|concept|pain-point|trend",
-  "aiReceivedSummary": "用一句話總結你理解使用者想做什麼（讓使用者確認你有聽懂）",
-  "targetAudience": "這支影片主要給誰看（例：剛入門的新手騎士 / 想升級裝備的進階騎士 / 預算有限的學生騎士）",
+  "aiReceivedSummary": "一句話說你理解使用者要做什麼",
+  "targetAudience": "誰在什麼具體情境下需要這支影片（寫成一個真實的人）",
   "research": {
-    "positioning": "這個主題在摩托車裝備市場的定位（一句話）",
-    "features": "重點規格或特色（用頓號分隔）",
-    "competitors": "同類型競品或相關內容比較",
-    "priceRange": "價格帶（NT$），如果是概念型內容可以寫適用範圍",
+    "insight": "這支影片為什麼值得拍——你的角度和市場上已有的有什麼不同，觀眾為什麼要看你而不是別人。如果你對市場現況不確定，說出來",
     "audienceCares": "目標觀眾最在意的 3 件事（具體到可以當影片段落標題）",
-    "searchKeywords": "建議這支影片要打的 3-5 個 YouTube 搜尋關鍵字（長尾詞優先，觀眾會搜什麼就寫什麼）",
-    "suggestedCta": "建議的 CTA（一句引導留言或互動的話）"
+    "searchKeywords": "3-5 個 YouTube 搜尋關鍵字（長尾詞，觀眾會打什麼就寫什麼）",
+    "suggestedCta": "觀眾看完要做什麼（具體行動，不是「歡迎留言」）",
+    "suggestedHook": "前三秒旁白，15 字以內，能讓目標觀眾停止滑動",
+    "confidence": "high|medium|low",
+    "aiNeeds": "如果 confidence 是 medium 或 low，具體缺什麼資訊才能讓建議更準確。high 就給空字串"
   },
   "hooks": [
-    { "style": "好奇缺口", "text": "讓人好奇到非點不可的開場（知識落差型）" },
-    { "style": "大膽宣言", "text": "有爭議性、有立場的開場（觀點型）" },
-    { "style": "故事引入", "text": "用個人經驗開場（共鳴型）" }
+    { "style": "Hook 風格名稱", "text": "Hook 文字（15字以內）" }
   ],
   "angles": [
     {
-      "title": "拍攝角度標題（一句話）",
-      "why": "為什麼觀眾會想看這個（具體到觀眾的情境）",
-      "howToShoot": "具體怎麼拍（鏡位、道具、對比方式）"
+      "title": "拍攝方向標題",
+      "why": "觀眾為什麼在意這個——具體到觀眾的情境，不是「大家都想知道」",
+      "howToShoot": "具體怎麼拍，具體到片師不需要再問"
     }
   ],
   "detailShots": [
     {
-      "what": "要拍的細節（例：600D 尼龍布料特寫）",
+      "what": "要拍的細節",
       "why": "為什麼觀眾想看這個細節",
-      "cameraSetup": "拍攝建議（鏡頭、角度、光線）"
+      "cameraSetup": "拍攝建議"
     }
   ],
-  "ecosystemNotes": "和畫布上其他影片的關聯建議（差異化方向、End Screen 互推建議、避免重複角度）。如果沒有其他影片就給「這是第一支影片，建議之後規劃 [方向]」"
+  "ecosystemNotes": "和畫布上其他影片的關聯建議。沒有其他影片就給「這是第一支影片，建議之後規劃 [方向]」"
 }
 
 ## 規則
 
-angles 規則：
-- 給 5 個拍攝方向
-- 前 2 個是「必拍基礎鏡頭」（開箱/外觀/基本功能展示）
-- 後 3 個是「差異化角度」（觀眾沒在別的頻道看過的）
-- 每個角度要具體到可以直接排拍攝表
-- 如果使用者有寫具體方向，至少 2 個 angle 要根據使用者的方向延伸
-
-detailShots 規則（產品型內容必填，概念型可選）：
-- 如果 inputType 是 product，至少給 4 個產品細節拍攝
-- 包含：材質特寫、功能演示、尺寸/重量比較、使用場景
-- 如果使用者有提到具體細節（例：水壺袋、600D布料），必須包含
-- 概念型內容可以給 0-2 個（例如比較圖表、數據畫面）
-
-hooks 規則：
-- 3 個 Hook 風格要差異夠大
-- 不能只是換詞，要是完全不同的切入角度
-- 每個 Hook 都要在 15 字以內、能當影片前 3 秒的旁白
-
-searchKeywords 規則：
-- 用觀眾會打的搜尋詞，不是專業術語
-- 長尾關鍵字優先（「機車背包推薦 2024」比「背包」好）
-- 至少 1 個要適合放進影片標題`;
+- angles 給 4-5 個。如果使用者有具體方向，至少 2 個必須根據使用者方向延伸
+- insight 是最重要的欄位。「介紹產品特色」是廢話，要說出具體的差異化角度
+- confidence 要誠實：high = 你有足夠知識推導，low = 大部分是推測
+- detailShots：product 型給 4 個以上；concept 型可以不給
+- hooks 3 個風格差異要夠大，不能只是換詞，每個在 15 字以內`;
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 8000,
       messages: [{ role: 'user', content: prompt }],
     });
 

@@ -89,7 +89,7 @@ JSON，不要加 markdown code block：
 
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
+      max_tokens: 16000,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -103,8 +103,9 @@ JSON，不要加 markdown code block：
     let result;
     try {
       result = JSON.parse(clean);
-    } catch {
-      return res.status(500).json({ error: 'AI 回傳格式錯誤', raw: text.substring(0, 300) });
+    } catch (parseErr) {
+      console.error('[plan] JSON parse failed:', parseErr.message, '| text len:', text.length);
+      return res.status(500).json({ error: 'AI 回傳格式錯誤', raw: text.substring(0, 500) });
     }
 
     return res.status(200).json(result);

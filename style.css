@@ -507,6 +507,29 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
   flex-shrink: 0; font-weight: 600; color: #0369a1;
   min-width: 55px; font-size: 11px;
 }
+.research-insight-block {
+  margin-bottom: 10px; padding: 10px 12px;
+  background: rgba(59,130,246,0.06); border: 1px solid rgba(59,130,246,0.2);
+  border-radius: 6px;
+}
+.research-insight-label {
+  font-size: 11px; font-weight: 600; color: #0369a1;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+}
+.research-insight-text { font-size: 12px; color: #1e3a5f; line-height: 1.6; }
+.research-ai-needs {
+  margin-top: 8px; padding: 6px 8px; border-radius: 4px;
+  background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3);
+  font-size: 11px; color: #92400e;
+}
+.confidence-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.confidence-high { background: rgba(16,185,129,0.12); color: #065f46; }
+.confidence-medium { background: rgba(245,158,11,0.12); color: #78350f; }
+.confidence-low { background: rgba(239,68,68,0.12); color: #7f1d1d; }
 
 /* Filming angle cards */
 .angle-card {
@@ -632,19 +655,28 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 }
 .modal-actions .primary:hover { background: var(--primary-hover); }
 
-/* v2 parse modal */
+/* v2 parse modal (kept for reference) */
 .modal-parse { width: 480px; }
 .modal-parse-hint { font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
-#input-parse {
-  display: block; width: 100%; padding: 10px 12px;
-  border: 1px solid var(--card-border); border-radius: 8px;
-  font-size: 14px; font-family: inherit; resize: vertical;
-  line-height: 1.6; color: var(--text-primary); background: var(--bg);
+
+/* add-node modal */
+.modal-add-node { width: 420px; }
+.modal-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.modal-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+.modal-stage-btns { display: flex; gap: 6px; }
+.modal-stage-btn {
+  flex: 1; padding: 7px 4px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface-secondary);
+  color: var(--text-secondary); cursor: pointer; transition: all 0.15s; text-align: center;
 }
-#input-parse:focus {
-  outline: none; border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+.modal-stage-btn:hover { border-color: var(--primary); color: var(--primary); }
+.modal-stage-btn.selected { background: var(--primary); border-color: var(--primary); color: #fff; }
+#input-topic {
+  width: 100%; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--card-border); background: var(--bg);
+  color: var(--text-primary); font-size: 14px; font-family: inherit;
 }
+#input-topic:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
 
 /* parse result panel */
 #parse-content { padding: 0 16px 24px; }

@@ -654,10 +654,10 @@ function render() {
       emptyState.id = 'canvas-empty-welcome';
       emptyState.className = 'canvas-empty-state';
       emptyState.innerHTML = `
-        <div class="empty-icon">✨</div>
-        <h3>描述你想做的影片，AI 幫你拆解成節點</h3>
-        <p>把你的構想隨意寫下來，不需要格式。AI 會判斷方向、拆解成影片節點、並分析哪些購買階段缺少覆蓋。</p>
-        <button class="empty-start-btn" id="empty-start-btn">開始規劃 →</button>
+        <div class="empty-icon">🗺️</div>
+        <h3>從購買旅程開始你的內容計劃</h3>
+        <p>選一個階段，加入第一個影片節點，AI 幫你補完細節</p>
+        <button class="empty-start-btn" id="empty-start-btn">＋ 新增第一個節點</button>
         <p class="empty-manual-hint">也可以雙擊畫布隨時新增節點</p>
       `;
       area.appendChild(emptyState);
@@ -1698,11 +1698,17 @@ function renderPanel() {
       <details class="panel-accordion" open>
         <summary>📋 AI 研究摘要</summary>
         <div class="ai-research-card">
+          ${research.insight ? `
+          <div class="research-insight-block">
+            <div class="research-insight-label">為什麼值得拍
+              ${research.confidence ? `<span class="confidence-badge confidence-${research.confidence}">${{'high':'●','medium':'◑','low':'○'}[research.confidence] || ''} ${{ high:'高', medium:'中', low:'低' }[research.confidence]}</span>` : ''}
+            </div>
+            <div class="research-insight-text">${esc(research.insight)}</div>
+            ${research.aiNeeds ? `<div class="research-ai-needs">⚠ AI 還需要：${esc(research.aiNeeds)}</div>` : ''}
+          </div>` : ''}
+          ${research.audienceCares ? `<div class="research-row"><span class="research-label">觀眾在意</span><span>${esc(research.audienceCares)}</span></div>` : ''}
           ${research.positioning ? `<div class="research-row"><span class="research-label">定位</span><span>${esc(research.positioning)}</span></div>` : ''}
           ${research.features ? `<div class="research-row"><span class="research-label">特色</span><span>${esc(research.features)}</span></div>` : ''}
-          ${research.competitors ? `<div class="research-row"><span class="research-label">競品</span><span>${esc(research.competitors)}</span></div>` : ''}
-          ${research.priceRange ? `<div class="research-row"><span class="research-label">價格帶</span><span>${esc(research.priceRange)}</span></div>` : ''}
-          ${research.audienceCares ? `<div class="research-row"><span class="research-label">觀眾在意</span><span>${esc(research.audienceCares)}</span></div>` : ''}
           ${research.searchKeywords ? `<div class="research-row"><span class="research-label">🔍 搜尋關鍵字</span><span class="search-keywords">${esc(research.searchKeywords)}</span></div>` : ''}
         </div>
       </details>
@@ -1852,7 +1858,7 @@ function renderPanel() {
         <span class="autosave-indicator" id="autosave-indicator"></span>
       </div>
       <div class="detail-node-actions">
-        <button class="diverge-btn" id="btn-diverge" title="從這支影片衍生更多相關影片">🌿 發散</button>
+        <button class="diverge-btn hidden" id="btn-diverge" title="從這支影片衍生更多相關影片">🌿 發散</button>
         <button class="merge-btn" id="btn-merge" title="把其他節點合併進來">🔀 收攏</button>
       </div>
       <div class="detail-danger-zone">
@@ -2009,7 +2015,7 @@ function renderPanel() {
       btn.disabled = true;
 
       try {
-        const result = await expandContent(topic, userText, node.main.job);
+        const result = await expandContent(topic, userText, node.main.job, node.positions.journey?.stage || '');
         if (result) {
           node.aiResearch = result.research;
           node.filmingAngles = (result.angles || []).map(a => ({ ...a, confirmed: false }));
@@ -2501,7 +2507,7 @@ function mockScript(node) {
   return lines.join('\n');
 }
 
-async function expandContent(topic, userNotes, job) {
+async function expandContent(topic, userNotes, job, stage = '') {
   // Collect existing node topics for ecosystem awareness
   const existingNodes = [...state.nodes.values()]
     .filter(n => n.main.topic !== topic) // exclude self
@@ -2512,7 +2518,7 @@ async function expandContent(topic, userNotes, job) {
     const res = await fetch('/api/expand', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, userNotes, job, existingNodes }),
+      body: JSON.stringify({ topic, userNotes, job, stage, existingNodes }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -4075,11 +4081,15 @@ function renderEmptyPanel() {
 
 // ── Modal (v2 parse flow) ──
 
-function showModal(x, y) {
+let _modalStage = '';
+
+function showModal(x, y, preselectedStage = '') {
   state.pendingPosition = { x, y };
+  _modalStage = preselectedStage;
   $('#modal-overlay').classList.remove('hidden');
-  $('#input-parse').value = '';
-  setTimeout(() => $('#input-parse').focus(), 50);
+  $('#input-topic').value = '';
+  $$('.modal-stage-btn').forEach(b => b.classList.toggle('selected', b.dataset.stage === preselectedStage));
+  setTimeout(() => $('#input-topic').focus(), 50);
 }
 
 function hideModal() {
@@ -4457,16 +4467,31 @@ function bindEvents() {
     }
   });
 
-  $('#modal-parse-btn').addEventListener('click', () => {
-    const input = $('#input-parse').value.trim();
-    if (!input) return;
-    runParseFlow(input);
+  $$('.modal-stage-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _modalStage = btn.dataset.stage;
+      $$('.modal-stage-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
   });
 
-  $('#input-parse').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      const input = $('#input-parse').value.trim();
-      if (input) runParseFlow(input);
+  $('#modal-add-btn').addEventListener('click', () => {
+    const topic = $('#input-topic').value.trim();
+    if (!topic) { $('#input-topic').focus(); return; }
+    const { x, y } = state.pendingPosition || { x: 100, y: 100 };
+    const node = createNode({ topic, job: '', cta: '', isMain: false }, x, y);
+    if (_modalStage) node.positions.journey.stage = _modalStage;
+    saveState();
+    state.selectedNodeId = node.id;
+    hideModal();
+    render();
+    renderPanel();
+  });
+
+  $('#input-topic').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const topic = $('#input-topic').value.trim();
+      if (topic) $('#modal-add-btn').click();
     }
   });
 
