@@ -1,8 +1,8 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-const PROJECT_INDEX_KEY = 'content-canvas-projects';
-let STORAGE_KEY = 'content-canvas-v1'; // will be overwritten by active project
+const PROJECT_INDEX_KEY = 'content-canvas-v2-projects';
+let STORAGE_KEY = 'content-canvas-v2-draft'; // will be overwritten by active project
 let currentProjectId = null;
 const COLD_START_RATIOS = { A: 25, B: 35, C: 30, D: 10 };
 const JOURNEY_LABELS = { A: 'A 認知', B: 'B 評估', C: 'C 信任', D: 'D 安心' };
@@ -64,7 +64,7 @@ function switchProject(projectId) {
   const project = list.find(p => p.id === projectId);
   if (!project) return;
   currentProjectId = projectId;
-  STORAGE_KEY = 'content-canvas-' + projectId;
+  STORAGE_KEY = 'content-canvas-v2-' + projectId;
   // Reset state
   state.nodes = new Map();
   state.connections = [];
@@ -109,7 +109,7 @@ function deleteProject(projectId) {
   let list = getProjectList();
   list = list.filter(p => p.id !== projectId);
   saveProjectList(list);
-  localStorage.removeItem('content-canvas-' + projectId);
+  localStorage.removeItem('content-canvas-v2-' + projectId);
   if (list.length === 0) {
     createProject('未命名專案');
   } else {
@@ -1574,12 +1574,14 @@ function renderPanel() {
   const detail = $('#panel-detail');
   const brief = $('#panel-brief');
   const review = $('#panel-review');
+  const parse = $('#panel-parse');
 
   if (state.selectedNodeId && state.nodes.has(state.selectedNodeId)) {
     const node = state.nodes.get(state.selectedNodeId);
     empty.classList.add('hidden');
     brief.classList.add('hidden');
     review.classList.add('hidden');
+    parse?.classList.add('hidden');
     detail.classList.remove('hidden');
     $('#panel-title').textContent = node.main.topic;
 
@@ -2196,7 +2198,7 @@ function renderPanel() {
     empty.classList.add('hidden');
     detail.classList.add('hidden');
     brief.classList.add('hidden');
-  } else {
+  } else if (!parse || parse.classList.contains('hidden')) {
     empty.classList.remove('hidden');
     detail.classList.add('hidden');
     brief.classList.add('hidden');
@@ -2635,11 +2637,10 @@ async function aiTitles(nodeId) {
   const node = state.nodes.get(nodeId);
   if (!node) return;
   try {
-    const res = await fetch('/api/expand', {
+    const res = await fetch('/api/titles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'titles',
         topic: node.main.topic,
         hook: node.aiResearch?.suggestedHook,
         angles: node.filmingAngles,
@@ -2954,6 +2955,7 @@ function showReviewPanel(suggestions, aiReview) {
   empty.classList.add('hidden');
   detail.classList.add('hidden');
   brief.classList.add('hidden');
+  $('#panel-parse')?.classList.add('hidden');
   review.classList.remove('hidden');
   state.selectedNodeId = null;
 
@@ -3491,6 +3493,7 @@ function generateNodeBrief(nodeId) {
     $('#panel-empty').classList.add('hidden');
     $('#panel-detail').classList.add('hidden');
     $('#panel-review').classList.add('hidden');
+    $('#panel-parse')?.classList.add('hidden');
     $('#panel-brief').classList.remove('hidden');
     $('#brief-content').innerHTML = `
       <div class="brief-no-research">
@@ -4009,39 +4012,154 @@ function autoArrangeNodes() {
   }, 480);
 }
 
-// ── Modal ──
+// ── Panel helpers ──
+
+function hideAllPanels() {
+  ['panel-empty', 'panel-detail', 'panel-brief', 'panel-review', 'panel-parse'].forEach(id => {
+    document.getElementById(id)?.classList.add('hidden');
+  });
+}
+
+function renderEmptyPanel() {
+  document.getElementById('panel-empty')?.classList.remove('hidden');
+}
+
+// ── Modal (v2 parse flow) ──
 
 function showModal(x, y) {
   state.pendingPosition = { x, y };
-  const overlay = $('#modal-overlay');
-  overlay.classList.remove('hidden');
-  $('#input-topic').value = '';
-  $('#input-cta').value = '';
-  $('#input-main').checked = false;
-
-  // Reset secondary job
-  const jobSecondaryEl = $('#input-job-secondary');
-  if (jobSecondaryEl) jobSecondaryEl.value = '';
-
-  // Auto-fill Job when creating from a journey stage
-  const stageAssign = state.pendingColumnAssign?.journey?.stage;
-  if (stageAssign && STAGE_DEFAULT_JOB[stageAssign]) {
-    $('#input-job').value = STAGE_DEFAULT_JOB[stageAssign];
-  } else {
-    $('#input-job').value = '';
-  }
-
-  const stageInput = $('#input-stage');
-  if (stageInput) {
-    stageInput.value = stageAssign || '';
-  }
-
-  setTimeout(() => $('#input-topic').focus(), 50);
+  $('#modal-overlay').classList.remove('hidden');
+  $('#input-parse').value = '';
+  setTimeout(() => $('#input-parse').focus(), 50);
 }
 
 function hideModal() {
   $('#modal-overlay').classList.add('hidden');
   state.pendingPosition = null;
+}
+
+// ── Parse flow ──
+
+async function runParseFlow(input) {
+  hideModal();
+  // Show loading in panel
+  hideAllPanels();
+  const panel = $('#panel-parse');
+  panel.classList.remove('hidden');
+  $('#parse-content').innerHTML = '<div class="panel-loading">AI 解讀中…</div>';
+
+  try {
+    const result = await callParseApi(input);
+    renderParseResult(result);
+  } catch (err) {
+    $('#parse-content').innerHTML = `<div class="panel-error">解讀失敗：${esc(err.message)}</div>`;
+  }
+}
+
+async function callParseApi(input) {
+  const res = await fetch('/api/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function renderParseResult(parseResult) {
+  const directionLabels = { 'product-led': '從產品出發', 'content-led': '從內容出發', 'no-product': '純內容' };
+  const roleLabels = { 'main': '主影片', 'child': '剪片', 'sibling': '系列', 'standalone': '獨立' };
+  const formatIcon = { 'long': '📹', 'short': '📱' };
+
+  let html = '';
+
+  html += `<div class="parse-direction-block">
+    <div class="parse-direction-tag">${directionLabels[parseResult.direction] || parseResult.direction}</div>
+    <div class="parse-direction-explain">${esc(parseResult.directionExplain || '')}</div>
+  </div>`;
+
+  html += `<div class="parse-videos-label">建議影片 ${parseResult.videos?.length || 0} 支</div>`;
+  (parseResult.videos || []).forEach(v => {
+    html += `<div class="parse-video-card">
+      <div class="parse-video-icon">${formatIcon[v.format] || '📹'}</div>
+      <div class="parse-video-body">
+        <div class="parse-video-topic">${esc(v.topic)}</div>
+        <div class="parse-video-meta">
+          <span class="parse-video-badge role-${v.role || 'standalone'}">${roleLabels[v.role] || v.role}</span>
+          <span class="parse-video-badge">${v.format === 'short' ? '短片' : '長片'}</span>
+          ${v.suggestedStage ? `<span class="parse-video-badge">${v.suggestedStage} ${JOURNEY_LABELS[v.suggestedStage] || ''}</span>` : ''}
+          ${v.suggestedJob ? `<span class="parse-video-badge">${v.suggestedJob}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  });
+
+  if (parseResult.clipOpportunities?.length > 0) {
+    html += `<div class="parse-clip-block">
+      <div class="parse-clip-label">✂ 剪片機會 ${parseResult.clipOpportunities.length} 個</div>`;
+    parseResult.clipOpportunities.forEach(c => {
+      html += `<div class="parse-clip-item">${esc(c.moment)} → ${esc(c.format)}${c.suggestedHook ? ` — 「${esc(c.suggestedHook)}」` : ''}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  if (parseResult.missingInfo) {
+    html += `<div class="parse-missing">⚠ ${esc(parseResult.missingInfo)}</div>`;
+  }
+
+  const count = parseResult.videos?.length || 0;
+  html += `<div class="parse-confirm-row">
+    <button class="parse-cancel-btn" id="parse-cancel-nodes">取消</button>
+    <button class="parse-confirm-btn" id="parse-confirm-nodes">確認，建立 ${count} 個節點 →</button>
+  </div>`;
+
+  $('#parse-content').innerHTML = html;
+
+  document.getElementById('parse-confirm-nodes').addEventListener('click', () => confirmParseNodes(parseResult));
+  document.getElementById('parse-cancel-nodes').addEventListener('click', () => {
+    hideAllPanels();
+    renderEmptyPanel();
+  });
+}
+
+function confirmParseNodes(parseResult) {
+  const area = $('#canvas-area');
+  const baseX = area.scrollLeft + 60;
+  const baseY = area.scrollTop + 60;
+  const videos = parseResult.videos || [];
+
+  videos.forEach((v, i) => {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const node = createNode({
+      topic: v.topic,
+      job: v.suggestedJob || '',
+      isMain: v.role === 'main',
+    }, baseX + col * 280, baseY + row * 220);
+
+    if (v.suggestedStage) {
+      node.positions.journey = node.positions.journey || {};
+      node.positions.journey.stage = v.suggestedStage;
+    }
+    if (v.format) {
+      node.positions.material = node.positions.material || {};
+      node.positions.material.column = v.format;
+    }
+    if (v.userIdeas?.length > 0) {
+      node.user = v.userIdeas.join('\n');
+    }
+    if (parseResult.sharedContext) {
+      node.sharedContext = parseResult.sharedContext;
+    }
+  });
+
+  saveState();
+  render();
+  hideAllPanels();
+  renderEmptyPanel();
 }
 
 // ── View Toast ──
@@ -4123,45 +4241,27 @@ function bindEvents() {
     }
   });
 
-  $('#node-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const topic = $('#input-topic').value.trim();
-    if (!topic) return;
-    const pos = state.pendingPosition || { x: 100, y: 100 };
-    const stageVal = $('#input-stage') ? $('#input-stage').value : '';
-    const jobSecondaryEl = $('#input-job-secondary');
-    const node = createNode({
-      topic,
-      job: $('#input-job').value,
-      jobSecondary: jobSecondaryEl ? jobSecondaryEl.value : '',
-      cta: $('#input-cta').value,
-      isMain: $('#input-main').checked,
-    }, pos.x, pos.y);
-    if (stageVal) {
-      node.positions.journey = node.positions.journey || {};
-      node.positions.journey.stage = stageVal;
-      saveState();
-    }
-    if (state.pendingColumnAssign) {
-      for (const [view, vals] of Object.entries(state.pendingColumnAssign)) {
-        if (!node.positions[view]) node.positions[view] = {};
-        Object.assign(node.positions[view], vals);
-      }
-      state.pendingColumnAssign = null;
-      saveState();
-    }
-    hideModal();
-    selectNode(node.id);
-    render();
-    // Auto-classify with AI if Job not specified
-    if (!node.main.job) {
-      aiClassifyNode(node).catch(() => {});
+  $('#modal-parse-btn').addEventListener('click', () => {
+    const input = $('#input-parse').value.trim();
+    if (!input) return;
+    runParseFlow(input);
+  });
+
+  $('#input-parse').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      const input = $('#input-parse').value.trim();
+      if (input) runParseFlow(input);
     }
   });
 
   $('#modal-cancel').addEventListener('click', hideModal);
   $('#modal-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) hideModal();
+  });
+
+  $('#parse-close').addEventListener('click', () => {
+    hideAllPanels();
+    renderEmptyPanel();
   });
 
   $('#btn-connect').addEventListener('click', () => {
@@ -4432,7 +4532,7 @@ function showProjectPicker() {
       let count = p.nodeCount;
       if (count == null) {
         try {
-          const data = JSON.parse(localStorage.getItem('content-canvas-' + p.id));
+          const data = JSON.parse(localStorage.getItem('content-canvas-v2-' + p.id));
           count = data?.nodes?.length || 0;
         } catch { count = 0; }
       }
@@ -4584,12 +4684,8 @@ async function init() {
     const id = 'p' + Date.now();
     list = [{ id, name: '未命名專案', createdAt: Date.now(), updatedAt: Date.now(), nodeCount: 0 }];
     saveProjectList(list);
-    const oldData = localStorage.getItem('content-canvas-v1');
-    if (oldData) {
-      localStorage.setItem('content-canvas-' + id, oldData);
-    }
     currentProjectId = id;
-    STORAGE_KEY = 'content-canvas-' + id;
+    STORAGE_KEY = 'content-canvas-v2-' + id;
     await loadState();
     renderProjectSelect();
     render();

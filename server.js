@@ -5,6 +5,7 @@ import { execSync } from 'child_process';
 import expandHandler from './api/expand.js';
 import reviewHandler from './api/review.js';
 import askHandler from './api/ask.js';
+import parseHandler from './api/parse.js';
 import { getUsage } from './api/_usage.js';
 
 const GIT_HASH = (() => {
@@ -68,6 +69,10 @@ const server = createServer(async (req, res) => {
   }
 
   // AI endpoints
+  if (req.method === 'POST' && req.url === '/api/parse') {
+    await routeApi(parseHandler, req, res);
+    return;
+  }
   if (req.method === 'POST' && req.url === '/api/expand') {
     await routeApi(expandHandler, req, res);
     return;

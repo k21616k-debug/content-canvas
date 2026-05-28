@@ -110,60 +110,26 @@
         </div>
         <div id="review-content"></div>
       </div>
+      <div id="panel-parse" class="hidden">
+        <div class="panel-header">
+          <h2>AI 解讀結果</h2>
+          <button id="parse-close" title="關閉" aria-label="關閉 AI 解讀">✕</button>
+        </div>
+        <div id="parse-content"></div>
+      </div>
     </aside>
   </main>
 
-  <!-- Node creation modal -->
+  <!-- Node creation modal - v2 parse flow -->
   <div id="modal-overlay" class="hidden">
-    <div id="modal">
-      <h3>新增節點</h3>
-      <form id="node-form">
-        <label>
-          你想拍什麼？ <span class="required">*</span>
-          <input type="text" id="input-topic" required placeholder="產品名、概念、觀眾問題、老闆交代的任務都行" autofocus autocomplete="off">
-          <span class="field-hint-inline">例：Alpaka 背包開箱 / 觀眾一直問防水 / 老闆說要拍新品</span>
-        </label>
-        <label>
-          主要用途 <span class="field-hint">這支影片主要幫你達成什麼？</span>
-          <select id="input-job">
-            <option value="">AI 自動判斷</option>
-            <option value="吸引">吸引 — 讓新觀眾認識你</option>
-            <option value="培育">培育 — 讓觀眾更了解產品</option>
-            <option value="轉換">轉換 — 讓觀眾下單購買</option>
-          </select>
-        </label>
-        <label>
-          次要用途 <span class="field-hint">這支影片順便達成的第二個目的（可選）</span>
-          <select id="input-job-secondary">
-            <option value="">無</option>
-            <option value="吸引">吸引 — 讓新觀眾認識你</option>
-            <option value="培育">培育 — 讓觀眾更了解產品</option>
-            <option value="轉換">轉換 — 讓觀眾下單購買</option>
-          </select>
-        </label>
-        <label>
-          行動呼籲 (CTA) <span class="field-hint">影片結尾叫觀眾做的事，沒有 CTA 觀眾看完就忘了你</span>
-          <input type="text" id="input-cta" placeholder="例：留言 1 2 3 告訴我、連結在資訊欄" autocomplete="off">
-        </label>
-        <label>
-          購買階段 <span class="field-hint">觀眾看這支影片時在哪個階段？</span>
-          <select id="input-stage">
-            <option value="">自動判斷</option>
-            <option value="A">A 認知 — 讓人知道你</option>
-            <option value="B">B 評估 — 讓人比較選擇</option>
-            <option value="C">C 信任 — 讓人相信你</option>
-            <option value="D">D 安心 — 讓人放心買</option>
-          </select>
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="input-main">
-          設為主節點 <span class="field-hint">這個系列最重要的核心影片</span>
-        </label>
-        <div class="modal-actions">
-          <button type="button" id="modal-cancel">取消</button>
-          <button type="submit" class="primary">建立</button>
-        </div>
-      </form>
+    <div id="modal" class="modal-parse">
+      <h3>描述你的影片規劃</h3>
+      <p class="modal-parse-hint">把你想做的內容寫下來，不需要格式，AI 會幫你拆解成節點</p>
+      <textarea id="input-parse" rows="6" placeholder="例：我拿到了三款騎士背包，想做一個比較影片。主要想強調舒適度、置物空間、和防水性能的差異。另外每款包各做一支短片介紹最大亮點，讓粉絲快速了解差異。" autocomplete="off"></textarea>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel">取消</button>
+        <button type="button" id="modal-parse-btn" class="primary">AI 解讀 →</button>
+      </div>
     </div>
   </div>
 
@@ -209,6 +175,6 @@
     }
   })();
   </script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app-v2.js"></script>
 </body>
 </html>
