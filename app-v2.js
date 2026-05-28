@@ -4106,6 +4106,26 @@ function renderParseResult(parseResult) {
     html += `</div>`;
   }
 
+  if (parseResult.gapSuggestions?.length > 0) {
+    html += `<div class="parse-gap-block">
+      <div class="parse-gap-label">💡 AI 建議補充 — 覆蓋不足的階段</div>`;
+    parseResult.gapSuggestions.forEach((g, i) => {
+      html += `<label class="parse-gap-item">
+        <input type="checkbox" class="parse-gap-check" data-gap-idx="${i}" checked>
+        <div class="parse-gap-body">
+          <div class="parse-gap-topic">${esc(g.topic)}</div>
+          <div class="parse-gap-meta">
+            <span class="parse-video-badge">${g.format === 'short' ? '短片' : '長片'}</span>
+            ${g.suggestedStage ? `<span class="parse-video-badge">${g.suggestedStage} ${JOURNEY_LABELS[g.suggestedStage] || ''}</span>` : ''}
+            ${g.suggestedJob ? `<span class="parse-video-badge">${g.suggestedJob}</span>` : ''}
+          </div>
+          <div class="parse-gap-reason">${esc(g.gapReason || '')}</div>
+        </div>
+      </label>`;
+    });
+    html += `</div>`;
+  }
+
   if (parseResult.missingInfo) {
     html += `<div class="parse-missing">⚠ ${esc(parseResult.missingInfo)}</div>`;
   }
@@ -4113,30 +4133,35 @@ function renderParseResult(parseResult) {
   const count = parseResult.videos?.length || 0;
   html += `<div class="parse-confirm-row">
     <button class="parse-cancel-btn" id="parse-cancel-nodes">取消</button>
-    <button class="parse-confirm-btn" id="parse-confirm-nodes">確認，建立 ${count} 個節點 →</button>
+    <button class="parse-confirm-btn" id="parse-confirm-nodes">確認，建立節點 →</button>
   </div>`;
 
   $('#parse-content').innerHTML = html;
 
-  document.getElementById('parse-confirm-nodes').addEventListener('click', () => confirmParseNodes(parseResult));
+  document.getElementById('parse-confirm-nodes').addEventListener('click', () => {
+    const checkedGaps = [...document.querySelectorAll('.parse-gap-check:checked')]
+      .map(el => parseResult.gapSuggestions[parseInt(el.dataset.gapIdx, 10)])
+      .filter(Boolean);
+    confirmParseNodes(parseResult, checkedGaps);
+  });
   document.getElementById('parse-cancel-nodes').addEventListener('click', () => {
     hideAllPanels();
     renderEmptyPanel();
   });
 }
 
-function confirmParseNodes(parseResult) {
+function confirmParseNodes(parseResult, gapSuggestions = []) {
   const area = $('#canvas-area');
   const baseX = area.scrollLeft + 60;
   const baseY = area.scrollTop + 60;
-  const videos = parseResult.videos || [];
+  const videos = [...(parseResult.videos || []), ...gapSuggestions];
 
   videos.forEach((v, i) => {
     const col = i % 3;
     const row = Math.floor(i / 3);
     const node = createNode({
       topic: v.topic,
-      job: v.suggestedJob || '',
+      job: v.suggestedJob || v.suggestedJob || '',
       isMain: v.role === 'main',
     }, baseX + col * 280, baseY + row * 220);
 
