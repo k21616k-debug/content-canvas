@@ -654,10 +654,11 @@ function render() {
       emptyState.id = 'canvas-empty-welcome';
       emptyState.className = 'canvas-empty-state';
       emptyState.innerHTML = `
-        <div class="empty-icon">📦</div>
-        <h3>開始規劃你的商品內容策略</h3>
-        <p>每支影片建立一個節點，從主題發想到完整企劃一步步完成</p>
-        <button class="empty-start-btn" id="empty-start-btn">＋ 建立第一個節點</button>
+        <div class="empty-icon">✨</div>
+        <h3>描述你想做的影片，AI 幫你拆解成節點</h3>
+        <p>把你的構想隨意寫下來，不需要格式。AI 會判斷方向、拆解成影片節點、並分析哪些購買階段缺少覆蓋。</p>
+        <button class="empty-start-btn" id="empty-start-btn">開始規劃 →</button>
+        <p class="empty-manual-hint">也可以雙擊畫布隨時新增節點</p>
       `;
       area.appendChild(emptyState);
       document.getElementById('empty-start-btn').addEventListener('click', () => {
@@ -1902,7 +1903,7 @@ function renderPanel() {
     });
 
     $('#btn-delete-node').addEventListener('click', () => {
-      if (confirm('刪除此節點？')) {
+      if (confirm(`刪除節點「${node.main.topic}」？`)) {
         deleteNode(node.id);
         render();
       }
@@ -2020,6 +2021,7 @@ function renderPanel() {
           node.ecosystemNotes = result.ecosystemNotes || '';
           saveState();
           renderPanel();
+          showToast('✅ AI 擴寫完成 — 選一個 Hook，確認拍攝角度');
           setTimeout(() => {
             const panel = document.getElementById('panel');
             const firstOpen = panel?.querySelector('details[open]');
@@ -2070,6 +2072,7 @@ function renderPanel() {
           node.hooks = data.hooks;
           saveState();
           renderPanel(node);
+          showToast('✅ Hook 已依你的方向重新生成');
         }
       } catch (e) {
         btn.disabled = false;
@@ -2977,6 +2980,8 @@ async function runGlobalReview() {
       state.lastAiReview = aiReview; // Cache for adopt/dismiss
       showReviewPanel(suggestions, aiReview);
       refreshVersionBadge();
+      const issueCount = Array.isArray(aiReview) ? aiReview.length : 0;
+      showToast(issueCount > 0 ? `🧩 AI 找到 ${issueCount} 個策略問題` : '✅ 策略看起來很完整');
     } else {
       // API returned error — remove loading indicator
       const el = document.querySelector('.ai-review-loading');
@@ -3557,6 +3562,7 @@ function generateNodeBrief(nodeId) {
   $('#panel-detail').classList.add('hidden');
   $('#panel-review').classList.add('hidden');
   $('#panel-brief').classList.remove('hidden');
+  showToast('✅ Brief 已生成 — 複製給製作組');
 
   // Find connected nodes
   const linked = [];
@@ -4251,6 +4257,8 @@ function confirmParseNodes(parseResult, gapSuggestions = []) {
   render();
   hideAllPanels();
   renderEmptyPanel();
+  const total = videos.length;
+  showToast(`✅ 已建立 ${total} 個節點 — 切到「購買階段」檢查覆蓋`);
 }
 
 // ── 發散：從節點衍生更多影片 ──
@@ -4392,13 +4400,31 @@ function showViewToast(view) {
   }, 2000);
 }
 
+function showToast(msg, duration = 2400) {
+  let el = document.getElementById('action-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'action-toast';
+    el.className = 'action-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.remove('action-toast-fade');
+  el.classList.add('action-toast-show');
+  void el.offsetWidth;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => {
+    el.classList.remove('action-toast-show');
+    el.classList.add('action-toast-fade');
+  }, duration);
+}
+
 // ── Events ──
 
 function bindEvents() {
   $$('.tab').forEach(t => {
     t.addEventListener('click', () => {
       state.currentView = t.dataset.view;
-      state.selectedNodeId = null;
       saveState();
       render();
       showViewToast(t.dataset.view);
