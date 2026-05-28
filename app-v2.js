@@ -1846,6 +1846,10 @@ function renderPanel() {
       <div class="detail-actions">
         <span class="autosave-indicator" id="autosave-indicator"></span>
       </div>
+      <div class="detail-node-actions">
+        <button class="diverge-btn" id="btn-diverge" title="從這支影片衍生更多相關影片">🌿 發散</button>
+        <button class="merge-btn" id="btn-merge" title="把其他節點合併進來">🔀 收攏</button>
+      </div>
       <div class="detail-danger-zone">
         <button class="duplicate-btn" id="btn-duplicate-node">📋 複製節點</button>
         <button class="delete-btn" id="btn-delete-node">🗑 刪除此節點</button>
@@ -1920,6 +1924,10 @@ function renderPanel() {
       selectNode(newNode.id);
       render();
     });
+
+    $('#btn-diverge').addEventListener('click', () => divergeFromNode(node.id));
+
+    $('#btn-merge').addEventListener('click', () => showMergePicker(node.id));
 
     const connList = $('#conn-list');
     const connTarget = $('#conn-target');
@@ -4185,6 +4193,109 @@ function confirmParseNodes(parseResult, gapSuggestions = []) {
   render();
   hideAllPanels();
   renderEmptyPanel();
+}
+
+// ── 發散：從節點衍生更多影片 ──
+
+async function divergeFromNode(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+
+  const parts = [`主題：${node.main.topic}`];
+  if (node.main.job) parts.push(`用途：${node.main.job}`);
+  if (node.positions?.journey?.stage) parts.push(`購買階段：${node.positions.journey.stage}`);
+  if (node.user) parts.push(`已知內容：${node.user}`);
+  if (node.aiResearch?.positioning) parts.push(`定位：${node.aiResearch.positioning}`);
+  const seedInput = parts.join('\n') + '\n\n請幫我從這支影片發散出更多相關影片，包含可以剪出來的短片、後續系列、或相關主題。';
+
+  hideAllPanels();
+  const panel = $('#panel-parse');
+  panel.classList.remove('hidden');
+  $('#parse-content').innerHTML = '<div class="panel-loading">AI 發散中…</div>';
+
+  try {
+    const result = await callParseApi(seedInput);
+    // Filter out videos too similar to current node
+    if (result.videos) {
+      result.videos = result.videos.filter(v =>
+        v.topic.trim() !== node.main.topic.trim()
+      );
+    }
+    result._divergeMode = true;
+    renderParseResult(result);
+  } catch (err) {
+    $('#parse-content').innerHTML = `<div class="panel-error">發散失敗：${esc(err.message)}</div>`;
+  }
+}
+
+// ── 收攏：把其他節點合併進來 ──
+
+function showMergePicker(targetNodeId) {
+  const target = state.nodes.get(targetNodeId);
+  if (!target) return;
+
+  const others = [...state.nodes.values()].filter(n => n.id !== targetNodeId);
+  if (others.length === 0) {
+    alert('畫布上沒有其他節點可以合併。');
+    return;
+  }
+
+  // Build overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'merge-overlay';
+  overlay.innerHTML = `
+    <div class="merge-picker">
+      <div class="merge-picker-header">
+        <strong>選擇要收攏進「${esc(target.main.topic)}」的節點</strong>
+        <button class="merge-picker-close" aria-label="關閉">✕</button>
+      </div>
+      <div class="merge-picker-list">
+        ${others.map(n => `
+          <label class="merge-picker-item">
+            <input type="checkbox" class="merge-check" data-id="${n.id}">
+            <span class="merge-item-topic">${esc(n.main.topic)}</span>
+            ${n.main.job ? `<span class="merge-item-badge">${esc(n.main.job)}</span>` : ''}
+          </label>
+        `).join('')}
+      </div>
+      <div class="merge-picker-actions">
+        <button class="merge-cancel-btn">取消</button>
+        <button class="merge-confirm-btn primary">收攏選取的節點</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('.merge-picker-close').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.merge-cancel-btn').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.merge-confirm-btn').addEventListener('click', () => {
+    const checked = [...overlay.querySelectorAll('.merge-check:checked')].map(el => el.dataset.id);
+    if (checked.length === 0) { alert('請至少選一個節點。'); return; }
+    confirmMerge(targetNodeId, checked);
+    overlay.remove();
+  });
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+function confirmMerge(targetId, sourceIds) {
+  const target = state.nodes.get(targetId);
+  if (!target) return;
+
+  sourceIds.forEach(sid => {
+    const src = state.nodes.get(sid);
+    if (!src) return;
+    // Append source user notes to target
+    const extra = [`【來自：${src.main.topic}】`, src.user].filter(Boolean).join('\n');
+    target.user = target.user ? target.user + '\n\n' + extra : extra;
+    // Remove any connections involving source, then delete
+    state.connections = state.connections.filter(c => c.from !== sid && c.to !== sid);
+    state.nodes.delete(sid);
+  });
+
+  saveState();
+  selectNode(targetId);
+  render();
 }
 
 // ── View Toast ──

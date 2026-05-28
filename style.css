@@ -715,6 +715,67 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
   font-size: 13px; cursor: pointer; font-family: inherit;
 }
 
+/* 發散 / 收攏 buttons */
+.detail-node-actions {
+  display: flex; gap: 8px; margin: 12px 0 4px;
+}
+.diverge-btn, .merge-btn {
+  flex: 1; padding: 8px; border-radius: 6px; font-size: 12px;
+  font-family: inherit; cursor: pointer; font-weight: 500;
+  border: 1px solid var(--card-border); background: var(--bg);
+  color: var(--text-secondary); transition: background 0.15s, color 0.15s;
+}
+.diverge-btn:hover { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.merge-btn:hover { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+
+/* merge picker overlay */
+.merge-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center; z-index: 200;
+}
+.merge-picker {
+  background: var(--panel-bg); border-radius: var(--radius-lg);
+  padding: 20px; width: 360px; max-height: 70vh;
+  display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+.merge-picker-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; font-size: 14px;
+}
+.merge-picker-close {
+  background: none; border: none; cursor: pointer; font-size: 16px;
+  color: var(--text-secondary); padding: 0 4px;
+}
+.merge-picker-list {
+  overflow-y: auto; flex: 1; margin-bottom: 14px; max-height: 40vh;
+}
+.merge-picker-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 4px;
+  border-bottom: 1px solid var(--card-border); cursor: pointer; font-size: 13px;
+}
+.merge-picker-item:last-child { border-bottom: none; }
+.merge-picker-item input { flex-shrink: 0; cursor: pointer; }
+.merge-item-topic { flex: 1; color: var(--text-primary); }
+.merge-item-badge {
+  font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  background: var(--canvas-bg); color: var(--text-secondary);
+  border: 1px solid var(--card-border); flex-shrink: 0;
+}
+.merge-picker-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.merge-cancel-btn {
+  padding: 7px 14px; background: transparent; border: 1px solid var(--card-border);
+  border-radius: 6px; font-size: 13px; cursor: pointer; font-family: inherit;
+  color: var(--text-secondary);
+}
+.merge-confirm-btn {
+  padding: 7px 16px; background: var(--primary); color: #fff; border: none;
+  border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.merge-confirm-btn:hover { background: var(--primary-hover); }
+
 /* gap suggestions */
 .parse-gap-block {
   margin-top: 16px; padding: 10px 12px; border-radius: 8px;
