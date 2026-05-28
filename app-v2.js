@@ -2621,12 +2621,39 @@ function executeAction(action) {
   }
 }
 
+function describeAction(action) {
+  const stageNames = { A: '認知', B: '評估', C: '信任', D: '安心' };
+  if (action.type === 'update') {
+    const node = state.nodes.get(action.nodeId);
+    const topic = node?.main.topic || action.nodeId;
+    const fieldName = { job: '用途', cta: 'CTA', topic: '標題' }[action.field] || action.field;
+    return `將「${topic}」的${fieldName}改為：「${action.value}」`;
+  } else if (action.type === 'connect') {
+    const from = state.nodes.get(action.fromId)?.main.topic || action.fromId;
+    const to = state.nodes.get(action.toId)?.main.topic || action.toId;
+    return `連接「${from}」→「${to}」`;
+  } else if (action.type === 'move-stage') {
+    const node = state.nodes.get(action.nodeId);
+    const topic = node?.main.topic || action.nodeId;
+    return `將「${topic}」移到 ${action.stage}（${stageNames[action.stage] || action.stage}）階段`;
+  } else if (action.type === 'new-node') {
+    const sLabel = action.stage ? `${action.stage} ${stageNames[action.stage] || ''} ` : '';
+    return `新增影片節點：「${action.topic}」（${sLabel}階段）`;
+  }
+  return action.label || '套用';
+}
+
 function renderAskResult(container, result) {
   let html = `<div class="ask-answer">${esc(result.answer)}</div>`;
   if (result.actions?.length > 0) {
     html += `<div class="ask-actions">`;
     result.actions.forEach((a, i) => {
-      html += `<button class="ai-action-btn adopt ask-action-btn" data-action-idx="${i}">${esc(a.label || '套用')}</button>`;
+      const desc = describeAction(a);
+      html += `
+        <div class="ask-action-item">
+          <span class="ask-action-desc">${esc(desc)}</span>
+          <button class="ai-action-btn adopt ask-action-btn" data-action-idx="${i}">${esc(a.label || '套用')}</button>
+        </div>`;
     });
     html += `</div>`;
   }
@@ -3230,9 +3257,10 @@ function showReviewPanel(suggestions, aiReview) {
     <div class="ask-section">
       <label>💬 向 AI 提問（全域）</label>
       <div class="ask-input-row">
-        <input type="text" id="ask-global-input" class="ask-input" placeholder="例：目前策略有什麼盲點？">
+        <textarea id="ask-global-input" class="ask-input" placeholder="例：目前策略有什麼盲點？" rows="3"></textarea>
         <button id="ask-global-btn" class="ask-send-btn">送出</button>
       </div>
+      <div class="ask-hint">⌘↵ 送出　Enter 換行</div>
       <div id="ask-global-result"></div>
     </div>`;
 
@@ -3274,7 +3302,10 @@ function showReviewPanel(suggestions, aiReview) {
     }
   });
   $('#ask-global-input')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') $('#ask-global-btn')?.click();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      $('#ask-global-btn')?.click();
+    }
   });
 
   // Refresh AI review (force re-run API)
