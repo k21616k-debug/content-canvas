@@ -18,6 +18,8 @@ export default async function handler(req, res) {
       if (n.cta) parts.push(`CTA=${n.cta}`);
       if (n.stage) parts.push(`階段=${n.stage}`);
       if (n.hook) parts.push(`Hook=${n.hook}`);
+      if (n.insight) parts.push(`切入點=${n.insight}`);
+      if (n.audienceCares) parts.push(`觀眾在意=${n.audienceCares}`);
       if (n.isMain) parts.push('★主節點');
       if (n.user) parts.push(`備註=${n.user.substring(0, 100)}`);
       if (n.angles) parts.push(`拍攝角度：${n.angles}`);

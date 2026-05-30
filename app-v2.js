@@ -491,7 +491,13 @@ function renderHealthBar() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const action = btn.dataset.action;
-      if (action === 'journey-view') { state.currentView = 'journey'; render(); }
+      if (action === 'journey-view') {
+        state.currentView = 'journey';
+        render();
+        // D 安心 can't be AI-generated (your store's after-sales facts aren't web-searchable);
+        // if D is the gap, say so explicitly + point to the now-clickable D lane, not a dead end.
+        if ((stageCounts.D || 0) === 0) showToast('D 安心需要你的售後事實（保固／退換政策／客服窗口）—— AI 查不到你家政策，無法代生。在 D 欄點「＋ 安心型影片」手動補一支。');
+      }
       else if (action === 'material-view') { state.currentView = 'material'; render(); }
       else if (action === 'connect-mode') { state.connectMode = true; render(); }
       else if (action === 'add-attract') {
@@ -601,6 +607,37 @@ function nodeReadiness(node) {
   if (node.aiResearch) score += 15;
   if (node.filmingAngles?.some(a => a.confirmed !== false)) score += 10;
   return Math.min(score, 100);
+}
+
+// Single atomic fan-out: write AI research to all canonical fields at once.
+// Returns the list of applied field labels (for the toast). Replaces the old
+// btn-apply-cta + btn-adopt-research dual write paths.
+function applyResearch(node) {
+  const r = node.aiResearch;
+  if (!r) return [];
+  const applied = [];
+  let snapped = false;
+  // snapshot once, lazily — only if we actually write something, so an empty 採納
+  // doesn't leave a no-op Ctrl-Z step.
+  const snap = () => { if (!snapped) { pushUndo(); snapped = true; } };
+  // CTA fills only when empty (matching Job/階段/insight below) so re-採納 won't clobber
+  // a hand-edited CTA. ⚑ Andrew: if you'd rather CTA always sync to the latest AI line,
+  // drop the `&& !node.main.cta` guard.
+  if (r.ctaSpoken && !node.main.cta) { snap(); node.main.cta = r.ctaSpoken; applied.push('CTA'); }
+  if (r.suggestedJob && !node.main.job) { snap(); node.main.job = r.suggestedJob; applied.push('Job'); }
+  // Validate against the A/B/C/D enum (same guard as diverge adopt 4360): the expand prompt
+  // could induce a 'C/D' string for 轉換 — written unvalidated it makes the node vanish from
+  // journey-view while still diluting the stage %. The exact loop Fix D's guard prevents.
+  if (r.suggestedStage && ['A', 'B', 'C', 'D'].includes(r.suggestedStage) && !node.positions?.journey?.stage) {
+    snap();
+    node.positions = node.positions || {};
+    node.positions.journey = { ...node.positions.journey, stage: r.suggestedStage };
+    applied.push('階段');
+  }
+  // insight seeds the user's notes only if they haven't written their own
+  if (r.insight && !(node.user && node.user.trim())) { snap(); node.user = r.insight; applied.push('洞察→備註'); }
+  if (applied.length) saveState();
+  return applied;
 }
 
 function applyGuideDismiss() {
@@ -1209,8 +1246,13 @@ function renderJourneyView(container) {
     else if (diff < -15) healthClass = 'danger';
     else if (diff < -8) healthClass = 'warning';
 
+    // D 安心 is the one stage AI can't generate — its ground-truth (your store's warranty /
+    // return policy) isn't web-searchable. Say so explicitly so the D gap reads as a manual
+    // boundary, not a 發散 target (forcing 發散 to fill D = banned stageTemplates noise).
     const gapHtml = nodes.length === 0
-      ? `<div class="gap-warning">⚠️ 缺口</div><div class="gap-hint">建議：${GAP_HINTS[key]}</div>`
+      ? (key === 'D'
+          ? `<div class="gap-warning">⚠️ 缺口（需人工補）</div><div class="gap-hint">D 安心是你家的售後事實（${GAP_HINTS.D}）——AI 查不到你的政策、不代生。點下方「＋」手動新增並填入。</div>`
+          : `<div class="gap-warning">⚠️ 缺口</div><div class="gap-hint">建議：${GAP_HINTS[key]}</div>`)
       : (actual < target - 5 ? `<div class="gap-hint">可補：${GAP_HINTS[key]}</div>` : '');
 
     const overLabel = diff > 10 ? ` <span class="over-quota-tag">過度集中</span>` : '';
@@ -1259,7 +1301,7 @@ function renderJourneyView(container) {
     addBtn.addEventListener('click', () => {
       state.pendingColumnAssign = { journey: { stage: key } };
       const area = $('#canvas-area');
-      showModal(area.clientWidth / 3, area.clientHeight / 3);
+      showModal(area.clientWidth / 3, area.clientHeight / 3, key); // preselect this column's stage in the modal
     });
     col.appendChild(addBtn);
 
@@ -1707,8 +1749,6 @@ function renderPanel() {
             ${research.aiNeeds ? `<div class="research-ai-needs">⚠ AI 還需要：${esc(research.aiNeeds)}</div>` : ''}
           </div>` : ''}
           ${research.audienceCares ? `<div class="research-row"><span class="research-label">觀眾在意</span><span>${esc(research.audienceCares)}</span></div>` : ''}
-          ${research.positioning ? `<div class="research-row"><span class="research-label">定位</span><span>${esc(research.positioning)}</span></div>` : ''}
-          ${research.features ? `<div class="research-row"><span class="research-label">特色</span><span>${esc(research.features)}</span></div>` : ''}
           ${research.searchKeywords ? `<div class="research-row"><span class="research-label">🔍 搜尋關鍵字</span><span class="search-keywords">${esc(research.searchKeywords)}</span></div>` : ''}
         </div>
       </details>
@@ -1822,9 +1862,9 @@ function renderPanel() {
           <div class="angle-header"><span class="angle-num">📣</span><strong>建議 CTA</strong> <span class="field-hint-inline">— 口播這句（15字以內）</span></div>
           <div class="angle-reason">「${esc(research.ctaSpoken)}」</div>
           ${research.ctaStrategy ? `<div class="brief-shot-how" style="margin-top:4px;font-size:12px;color:#475569">策略：${esc(research.ctaStrategy)}</div>` : ''}
-          <button class="ai-action-btn adopt cta-apply-btn" id="btn-apply-cta"${node.main.cta === research.ctaSpoken ? ' disabled' : ''}>${node.main.cta === research.ctaSpoken ? '✓ 已套用' : '套用為我的 CTA'}</button>
+          ${node.main.cta === research.ctaSpoken ? `<div class="field-hint-inline" style="margin-top:4px;color:#059669">✓ 已套用為 CTA</div>` : ''}
         </div>` : ''}
-        <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果到備註</button>
+        <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果（CTA + 洞察一次到位）</button>
         <button class="expand-btn" id="btn-titles" style="margin-top:6px">🎬 YouTube 標題建議</button>
         <div id="titles-result"></div>
       </div>
@@ -1859,7 +1899,7 @@ function renderPanel() {
         <span class="autosave-indicator" id="autosave-indicator"></span>
       </div>
       <div class="detail-node-actions">
-        <button class="diverge-btn hidden" id="btn-diverge" title="從這支影片衍生更多相關影片">🌿 發散</button>
+        <button class="diverge-btn" id="btn-diverge" title="從這支影片深度發散 3 個延伸影片">🌿 發散</button>
         <button class="merge-btn" id="btn-merge" title="把其他節點合併進來">🔀 收攏</button>
       </div>
       <div class="detail-danger-zone">
@@ -2087,15 +2127,6 @@ function renderPanel() {
       }
     });
 
-    // Apply suggested CTA directly to node.main.cta
-    $('#btn-apply-cta')?.addEventListener('click', () => {
-      const cta = node.aiResearch?.ctaSpoken;
-      if (!cta) return;
-      node.main.cta = cta;
-      saveState();
-      renderPanel(node);
-    });
-
     // Confirm/unconfirm filming angles
     $$('.angle-confirm-chk').forEach(chk => {
       chk.addEventListener('change', (e) => {
@@ -2135,41 +2166,13 @@ function renderPanel() {
       });
     });
 
-    // Adopt research results into user notes
+    // Adopt research → single atomic fan-out (applyResearch). Hooks/angles/details
+    // already live on the node and render in their own sections, so we no longer
+    // dump them into the user's notes.
     $('#btn-adopt-research')?.addEventListener('click', () => {
-      const parts = [];
-      if (node.aiResearch) {
-        const r = node.aiResearch;
-        if (r.positioning) parts.push(`定位：${r.positioning}`);
-        if (r.features) parts.push(`特色：${r.features}`);
-        if (r.competitors) parts.push(`競品：${r.competitors}`);
-        if (r.searchKeywords) parts.push(`搜尋關鍵字：${r.searchKeywords}`);
-      }
-      if (node.hooks?.length > 0) {
-        parts.push('Hook 選項：');
-        node.hooks.forEach(h => parts.push(`- ${h.style}：${h.text}`));
-      } else if (node.aiResearch?.suggestedHook) {
-        parts.push(`Hook：${node.aiResearch.suggestedHook}`);
-      }
-      if (node.filmingAngles?.length > 0) {
-        parts.push('拍攝方向：');
-        node.filmingAngles.forEach((a, i) => {
-          parts.push(`${i + 1}. ${a.title} → ${a.why}`);
-        });
-      }
-      if (node.detailShots?.length > 0) {
-        parts.push('產品細節拍攝：');
-        node.detailShots.forEach(d => parts.push(`- ${d.what}：${d.why}`));
-      }
-      if (node.aiResearch?.ctaSpoken) {
-        node.main.cta = node.aiResearch.ctaSpoken;
-      }
-      if (node.ecosystemNotes) {
-        parts.push(`影片關聯：${node.ecosystemNotes}`);
-      }
-      node.user = node.user ? node.user + '\n\n' + parts.join('\n') : parts.join('\n');
-      saveState();
-      renderPanel();
+      const applied = applyResearch(node);
+      render(); renderPanel(node);
+      showToast(applied.length ? `✅ 已採納：${applied.join('、')}` : '沒有可採納的研究結果');
     });
 
     // YouTube title suggestions
@@ -2538,11 +2541,13 @@ function mockExpand(topic, userNotes) {
     aiReceivedSummary: `收到主題「${topic}」${userNotes ? `，使用者想拍：${userNotes.substring(0, 50)}` : ''}`,
     targetAudience: '對摩托車裝備感興趣的騎士',
     research: {
-      positioning: `${topic} — 需要更多資訊來定位`,
-      features: userNotes || '（請補充產品特色）',
+      insight: `（離線模式）${topic} — 需要連線讓 AI 上網查證，才能給出有根據的切入點`,
       audienceCares: '品質、價格、實用性',
       searchKeywords: `${topic}推薦、${topic}評測、${topic}怎麼選`,
       ctaSpoken: `你用過${topic}嗎？留言分享你的經驗`,
+      confidence: 'low',
+      suggestedJob: '吸引',
+      suggestedStage: 'A',
     },
     hooks: [
       { style: '好奇缺口', text: `關於${topic}，你可能不知道的三件事` },
@@ -2564,6 +2569,8 @@ async function aiAsk(question, focusNodeId) {
     id: n.id, topic: n.main.topic, job: n.main.job, cta: n.main.cta,
     stage: n.positions.journey?.stage, isMain: n.isMain,
     hook: n.aiResearch?.suggestedHook || '',
+    insight: n.aiResearch?.insight || '',
+    audienceCares: n.aiResearch?.audienceCares || '',
     user: n.user || '',
     angles: (n.filmingAngles || []).map(a => a.title).join('、'),
   }));
@@ -2672,74 +2679,23 @@ function renderAskResult(container, result) {
   });
 }
 
-// ── AI: Auto-classify node ──
-async function aiClassifyNode(node) {
-  try {
-    const res = await fetch('/api/classify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: node.main.topic, userNotes: node.user || '' }),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-
-    // If input is too vague, skip auto-classification
-    if (data.isVague) {
-      // Show a hint that user should use AI expand
-      console.log('Vague input detected, skipping auto-classify');
-      return;
-    }
-
-    const updated = [];
-    if (data.primaryJob && !node.main.job) { node.main.job = data.primaryJob; updated.push(data.primaryJob); }
-    if (data.secondaryJob && !node.main.jobSecondary) { node.main.jobSecondary = data.secondaryJob; updated.push(data.secondaryJob); }
-    if (data.cta && !node.main.cta) { node.main.cta = data.cta; updated.push('CTA'); }
-    if (data.stage) { node.positions.journey = { ...node.positions.journey, stage: data.stage }; updated.push(data.stage); }
-    if (updated.length === 0) return;
-    saveState();
-    render();
-    if (state.selectedNodeId === node.id) renderPanel(node.id);
-    // Show inline toast on the node card
-    const cardEl = document.querySelector(`.node-card[data-node-id="${node.id}"]`);
-    if (cardEl) {
-      const toast = document.createElement('div');
-      toast.style.cssText = 'position:absolute;bottom:4px;right:4px;background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;pointer-events:none;z-index:10;opacity:1;transition:opacity 0.4s';
-      toast.textContent = `✦ 已自動分類：${updated.join('・')}`;
-      cardEl.style.position = 'relative';
-      cardEl.appendChild(toast);
-      setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 400); }, 2500);
-    }
-  } catch { /* silent fail */ }
-}
 
 // ── AI: YouTube title suggestions ──
 async function aiTitles(nodeId) {
   const node = state.nodes.get(nodeId);
   if (!node) return;
   try {
-    const res = await fetch('/api/titles', {
+    const res = await fetch('/api/expand', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        action: 'titles',
         topic: node.main.topic,
         hook: node.aiResearch?.suggestedHook,
         angles: node.filmingAngles,
         research: node.aiResearch,
         job: node.main.job,
       }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
-
-// ── AI: Brief polish ──
-async function aiBriefPolish(topic, fields) {
-  try {
-    const res = await fetch('/api/brief', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, fields }),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -2996,6 +2952,8 @@ async function runGlobalReview() {
       topic: n.main.topic, job: n.main.job, cta: n.main.cta,
       stage: n.positions.journey?.stage, isMain: n.isMain,
       hook: n.aiResearch?.suggestedHook || '',
+      insight: n.aiResearch?.insight || '',
+      audienceCares: n.aiResearch?.audienceCares || '',
       angles: (n.filmingAngles || []).map(a => a.title).join('、'),
       userNotes: n.user ? n.user.trim().substring(0, 120) : '',
       hasUserNotes: !!(n.user && n.user.trim()),
@@ -3554,9 +3512,7 @@ function exportAllBriefs() {
     if (node.aiResearch) {
       const r = node.aiResearch;
       text += '\nAI 研究：\n';
-      if (r.positioning) text += `- 定位：${r.positioning}\n`;
-      if (r.features) text += `- 特色：${r.features}\n`;
-      if (r.competitors) text += `- 競品：${r.competitors}\n`;
+      if (r.insight) text += `- 切入點：${r.insight}\n`;
       if (r.audienceCares) text += `- 觀眾在意：${r.audienceCares}\n`;
     }
 
@@ -3751,10 +3707,10 @@ function generateNodeBrief(nodeId) {
       <div class="brief-field-label">目標觀眾</div>
       <div class="brief-field-value">${personText ? esc(personText) : '<span class="brief-empty">AI 擴寫後自動填入</span>'}</div>
     </div>
-    ${r?.competitors ? `
+    ${r?.insight ? `
     <div class="brief-field brief-field-numbered">
-      <div class="brief-field-label">競品參照</div>
-      <div class="brief-field-value">${esc(r.competitors)}</div>
+      <div class="brief-field-label">切入點（為什麼拍）</div>
+      <div class="brief-field-value">${esc(r.insight)}</div>
     </div>` : ''}
     ${framework ? `
     <div class="brief-field brief-field-numbered">
@@ -3792,10 +3748,7 @@ function generateNodeBrief(nodeId) {
     html += `<div class="brief-hint">💡 先在節點詳情按「✨ AI 擴寫企劃」取得拍攝方向，才能展開腳本</div>`;
   }
 
-  // ── AI 潤稿 + 複製按鈕 ──
-  html += `<button class="expand-btn" id="btn-polish-brief" style="margin-top:12px;">
-    ✨ AI 潤稿 Brief
-  </button>`;
+  // ── 複製按鈕 ──
   html += `<button class="expand-btn" id="btn-copy-brief" style="margin-top:8px; border-style:solid; background:rgba(16,185,129,0.08); border-color:#10b981; color:#059669;">
     📋 複製 Brief 到剪貼簿
   </button>`;
@@ -3818,38 +3771,6 @@ function generateNodeBrief(nodeId) {
     }
   });
 
-  // AI polish brief
-  $('#btn-polish-brief')?.addEventListener('click', async () => {
-    const btn = $('#btn-polish-brief');
-    btn.disabled = true;
-    btn.textContent = '✨ 潤稿中...';
-    const fields = {
-      job: node.main.job ? node.main.job + ' — ' + (JOB_DESC[node.main.job] || '') : '',
-      person: personText,
-      coreMessage: coreMsg,
-      nonNegotiables: nonNeg,
-      shortClips: shortClips,
-      frameworkLink: framework,
-    };
-    const result = await aiBriefPolish(node.main.topic, fields);
-    btn.disabled = false;
-    btn.textContent = '✨ AI 潤稿 Brief';
-    if (result) {
-      // Store polished version and re-render
-      node._polishedBrief = result;
-      saveState();
-      // Update the brief fields in-place
-      const fieldEls = document.querySelectorAll('.brief-field-numbered .brief-field-value');
-      const polished = [result.job, result.person, result.coreMessage, result.nonNegotiables, result.shortClips, result.frameworkLink];
-      fieldEls.forEach((el, i) => {
-        if (polished[i]) {
-          el.textContent = polished[i];
-          el.style.borderLeft = '3px solid #8b5cf6';
-          el.style.paddingLeft = '8px';
-        }
-      });
-    }
-  });
 
   // Copy brief to clipboard — matches the 拍攝執行清單 display format
   $('#btn-copy-brief')?.addEventListener('click', () => {
@@ -3885,7 +3806,7 @@ function generateNodeBrief(nodeId) {
     lines.push(`## 📊 策略背景`);
     lines.push(`目的：${node.main.job ? `${node.main.job} — ${JOB_DESC[node.main.job] || ''}` : '未指定'}`);
     if (personText) { lines.push(''); lines.push(`觀眾：${personText}`); }
-    if (r?.positioning) { lines.push(''); lines.push(`定位：${r.positioning}`); }
+    if (r?.insight) { lines.push(''); lines.push(`切入點：${r.insight}`); }
     if (framework) { lines.push(''); lines.push(`連線：\n${framework}`); }
     if (node.scriptDraft) {
       lines.push('');
@@ -4324,33 +4245,129 @@ function confirmParseNodes(parseResult, gapSuggestions = []) {
   showToast(`✅ 已建立 ${total} 個節點 — 切到「購買階段」檢查覆蓋`);
 }
 
-// ── 發散：從節點衍生更多影片 ──
+// ── 發散：從節點深度衍生 3 個候選新影片（一按發散）──
+
+let _divergeCands = [];
+let _divergeSource = null;
+function resetDiverge() { _divergeCands = []; _divergeSource = null; }
 
 async function divergeFromNode(nodeId) {
   const node = state.nodes.get(nodeId);
   if (!node) return;
 
-  const parts = [`主題：${node.main.topic}`];
-  if (node.main.job) parts.push(`用途：${node.main.job}`);
-  if (node.positions?.journey?.stage) parts.push(`購買階段：${node.positions.journey.stage}`);
-  if (node.user) parts.push(`已知內容：${node.user}`);
-  if (node.aiResearch?.positioning) parts.push(`定位：${node.aiResearch.positioning}`);
-  const seedInput = parts.join('\n') + '\n\n請幫我從這支影片發散出更多相關影片，包含可以剪出來的短片、後續系列、或相關主題。';
-
+  // 必修1: a diverge has no "selected node" — otherwise adopt's render()→renderPanel()
+  // re-shows the source node's detail panel and hides the candidate list (the 3-選-1 bug).
+  state.selectedNodeId = null;
+  resetDiverge();
   hideAllPanels();
-  const panel = $('#panel-parse');
-  panel.classList.remove('hidden');
-  $('#parse-content').innerHTML = '<div class="panel-loading">AI 發散中…</div>';
+  $('#panel-parse').classList.remove('hidden');
+  $('#parse-content').innerHTML = '<div class="panel-loading"><div id="diverge-load-msg">🌱 AI 正在發散 3 個深度方向…</div><div id="diverge-load-sub" style="font-size:11px;color:#94a3b8;margin-top:6px"></div></div>';
+  // Staged progress + running timer: a frozen "約 1 分鐘" string at the 60-80s mark reads
+  // as "hung" and users close the tab. Self-clears when #parse-content is replaced by results.
+  const _dvT0 = Date.now();
+  const _dvStages = ['🌱 上網查證台灣市場資料中…', '🔍 比對既有影片、找差異化角度…', '✍️ 整理方向、寫 Hook 中…', '⏳ 快好了，正在收尾…'];
+  clearInterval(window._dvTick);
+  window._dvTick = setInterval(() => {
+    const m = $('#diverge-load-msg'), s = $('#diverge-load-sub');
+    if (!m || !s) { clearInterval(window._dvTick); return; }
+    const sec = Math.round((Date.now() - _dvT0) / 1000);
+    m.textContent = _dvStages[Math.min(_dvStages.length - 1, Math.floor(sec / 20))];
+    s.textContent = `已等待 ${sec} 秒（通常 60–90 秒）`;
+  }, 1000);
 
   try {
-    const result = await callParseApi(seedInput);
-    if (result.videos) {
-      result.videos = result.videos.filter(v => v.topic.trim() !== node.main.topic.trim());
+    const res = await fetch('/api/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'diverge',
+        topic: node.main.topic,
+        job: node.main.job,
+        stage: node.positions?.journey?.stage || '',
+        insight: node.aiResearch?.insight || '',
+        userNotes: node.user || '',
+        // Send each existing node's topic + its insight (angle) so diverge can judge
+        // semantic overlap by argument, not just by title (the duplication-contract fix).
+        existingTopics: [...state.nodes.values()].map(n => ({ topic: n.main.topic, insight: (n.aiResearch?.insight || '').slice(0, 100) })),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || (res.status === 429 ? '查詢太密集，請等約一分鐘再試一次' : '伺服器回 ' + res.status));
     }
-    renderParseResult(result, seedInput);
+    if (data.error && !data.candidates?.length) {
+      $('#panel-parse')?.classList.remove('hidden');
+      $('#parse-content').innerHTML = `<div class="panel-error">${esc(data.error)}</div>`;
+      return;
+    }
+    renderDivergeCandidates(node, data.candidates || []);
   } catch (err) {
+    $('#panel-parse')?.classList.remove('hidden');
     $('#parse-content').innerHTML = `<div class="panel-error">發散失敗：${esc(err.message)}</div>`;
   }
+}
+
+function renderDivergeCandidates(sourceNode, candidates) {
+  // 加分I: results can arrive after the user clicked another node (render()→renderPanel()
+  // would have hidden us) — re-show the candidate panel before writing into it.
+  $('#panel-parse')?.classList.remove('hidden');
+  if (!candidates.length) {
+    $('#parse-content').innerHTML = '<div class="panel-error">AI 沒給出候選，再試一次。</div>';
+    return;
+  }
+  _divergeCands = candidates;
+  _divergeSource = sourceNode.id;
+  const jobCls = { '吸引': 'job-attract', '培育': 'job-nurture', '轉換': 'job-convert' };
+  $('#parse-content').innerHTML = `
+    <div style="font-size:13px;color:#475569;margin-bottom:12px">🌱 從「${esc(sourceNode.main.topic)}」發散出 ${candidates.length} 個方向 — 挑你要的，採用就變成新節點接回來</div>
+    ${candidates.map((c, i) => `
+      <div class="angle-card diverge-card" data-idx="${i}" style="margin-bottom:10px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:6px">${esc(c.topic)}</div>
+        <div style="margin-bottom:6px">
+          ${c.suggestedJob ? `<span class="job-badge ${jobCls[c.suggestedJob] || ''}">${esc(c.suggestedJob)}</span>` : ''}
+          ${c.suggestedStage ? `<span class="job-badge" style="background:#f1f5f9;color:#475569">階段 ${esc(c.suggestedStage)}</span>` : ''}
+        </div>
+        ${c.insight ? `<div style="font-size:12px;color:#334155;margin-bottom:6px;line-height:1.5">${esc(c.insight)}</div>` : ''}
+        ${c.suggestedHook ? `<div style="font-size:12px;color:#7c3aed;font-style:italic;margin-bottom:8px">Hook：「${esc(c.suggestedHook)}」</div>` : ''}
+        <div style="display:flex;gap:6px">
+          <button class="ai-action-btn adopt diverge-adopt-btn" data-idx="${i}" style="flex:1">✓ 採用（變新節點）</button>
+          <button class="ai-action-btn diverge-drop-btn" data-idx="${i}">✗ 丟棄</button>
+        </div>
+      </div>`).join('')}`;
+  $$('#parse-content .diverge-adopt-btn').forEach(btn =>
+    btn.addEventListener('click', () => adoptDivergeCandidate(parseInt(btn.dataset.idx, 10), btn)));
+  $$('#parse-content .diverge-drop-btn').forEach(btn =>
+    btn.addEventListener('click', () => btn.closest('.diverge-card')?.remove()));
+}
+
+function adoptDivergeCandidate(idx, btn) {
+  const c = _divergeCands[idx];
+  if (!c) return;
+  const src = state.nodes.get(_divergeSource);
+  if (!src) { showToast('來源節點已不存在，無法接回'); return; }
+  const sx = src.positions?.topic?.x || 200;
+  const sy = src.positions?.topic?.y || 200;
+  const newNode = createNode({ topic: c.topic, job: c.suggestedJob || '', cta: '' }, sx + 280, sy + 60 + idx * 50);
+  newNode.aiResearch = {
+    insight: c.insight || '', suggestedHook: c.suggestedHook || '',
+    suggestedJob: c.suggestedJob || '', suggestedStage: c.suggestedStage || '', ctaSpoken: '',
+    audienceCares: c.audienceCares || '', searchKeywords: c.searchKeywords || '',
+  };
+  // NOTE: do NOT seed newNode.user with c.insight — that AI speculation would be
+  // re-read by the next 擴寫 as the user's 🔴 hard requirement (expand.js) and amplified
+  // unquestioned. The insight already lives in newNode.aiResearch.insight for downstream.
+  newNode.filmingAngles = (c.angles || []).map(a => ({ ...a, confirmed: false }));
+  // Validate against the A/B/C/D enum: an unvalidated 'C/D' or '轉換' from the AI would
+  // write a junk stage key that vanishes the node from journey-view AND keeps the health
+  // bar reporting that stage's gap (the fake "adopted D but still flagged" loop).
+  if (['A', 'B', 'C', 'D'].includes(c.suggestedStage)) newNode.positions.journey = { ...newNode.positions.journey, stage: c.suggestedStage };
+  state.connections.push({ from: src.id, to: newNode.id });
+  saveState();
+  render();
+  // 必修1: with selectedNodeId null, render()→renderPanel() leaves the visible parse
+  // panel alone, so the remaining candidates stay adoptable.
+  showToast(`✅ 已採用「${c.topic.slice(0, 12)}」，已連回來源 — 建議再擴寫補完`);
+  if (btn) { btn.textContent = '✓ 已採用'; btn.disabled = true; const card = btn.closest('.diverge-card'); if (card) card.style.opacity = '0.55'; }
 }
 
 // ── 收攏：把其他節點合併進來 ──
@@ -4554,6 +4571,7 @@ function bindEvents() {
   });
 
   $('#parse-close').addEventListener('click', () => {
+    resetDiverge();
     hideAllPanels();
     renderEmptyPanel();
   });
