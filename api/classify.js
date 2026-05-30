@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
@@ -48,6 +49,7 @@ ${userNotes ? `補充資訊：${userNotes}` : ''}
       messages: [{ role: 'user', content: prompt }],
     });
 
+    addUsage('classify', msg.usage.input_tokens, msg.usage.output_tokens);
     const text = msg.content[0].text.trim();
     const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
     const result = JSON.parse(clean);

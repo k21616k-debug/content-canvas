@@ -63,6 +63,10 @@ function switchProject(projectId) {
   const list = getProjectList();
   const project = list.find(p => p.id === projectId);
   if (!project) return;
+  // Cancel any pending debounced save for the OUTGOING project: saveToFile captured the old
+  // project's data but reads currentProjectId at fire-time — without this, switching within
+  // 800ms writes the old data under the NEW projectId, polluting the new project's file.
+  clearTimeout(_saveTimer);
   currentProjectId = projectId;
   STORAGE_KEY = 'content-canvas-v2-' + projectId;
   // Reset state

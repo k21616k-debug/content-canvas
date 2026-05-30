@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
@@ -31,7 +32,7 @@ ${research?.suggestedHook ? `Hook：${research.suggestedHook}` : ''}
 訪綱問題：
 ${anglesText || '（無指定）'}
 
-${user?.notes ? `使用者補充：${user.notes}` : ''}
+${user ? `使用者補充：${user}` : ''}
 
 請用繁體中文寫訪談腳本大綱，格式如下：
 - 用時間碼標記每個段落 [MM:SS-MM:SS]
@@ -53,13 +54,13 @@ ${user?.notes ? `使用者補充：${user.notes}` : ''}
 主題：${topic}
 影片目的：${job || '未指定'}
 CTA：${cta || '留言分享你的想法'}
-${research?.positioning ? `定位：${research.positioning}` : ''}
+${research?.insight ? `切入角度：${research.insight}` : ''}
 ${research?.suggestedHook ? `Hook：${research.suggestedHook}` : ''}
 
 拍攝角度：
 ${anglesText || '（無指定）'}
 
-${user?.notes ? `使用者補充：${user.notes}` : ''}
+${user ? `使用者補充：${user}` : ''}
 
 請用繁體中文寫腳本大綱，格式如下：
 - 用時間碼標記每個段落 [MM:SS-MM:SS]
@@ -77,6 +78,7 @@ ${user?.notes ? `使用者補充：${user.notes}` : ''}
     });
 
     const script = msg.content[0].text.trim();
+    addUsage('script', msg.usage.input_tokens, msg.usage.output_tokens);
     return res.status(200).json({ script });
   } catch (err) {
     console.error('Script error:', err.message);
