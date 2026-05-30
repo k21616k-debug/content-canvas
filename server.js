@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, createReadStream } from 'fs';
+import { readFileSync, writeFileSync, existsSync, createReadStream, mkdirSync, renameSync } from 'fs';
 import { createServer } from 'http';
 import { join, extname } from 'path';
 import { execSync } from 'child_process';
@@ -8,6 +8,7 @@ import askHandler from './api/ask.js';
 import planHandler from './api/plan.js';
 import briefHandler from './api/brief.js';
 import classifyHandler from './api/classify.js';
+import scriptHandler from './api/script.js';
 import { getUsage } from './api/_usage.js';
 
 const GIT_HASH = (() => {
@@ -18,6 +19,14 @@ const START_TIME = new Date().toISOString();
 
 const PORT = process.env.PORT || 3456;
 const DATA_FILE = join(import.meta.dirname, 'canvas-data.json');
+const DATA_DIR = join(import.meta.dirname, 'data');
+if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+
+// Resolve a per-project data file, guarded against path traversal (projectId comes from the
+// client). Returns null for a bad id so the caller can 400 instead of writing anywhere.
+function projectFile(id) {
+  return /^[A-Za-z0-9_-]+$/.test(id || '') ? join(DATA_DIR, id + '.json') : null;
+}
 
 const MIME = {
   '.html': 'text/html',
@@ -95,12 +104,27 @@ const server = createServer(async (req, res) => {
     await routeApi(classifyHandler, req, res);
     return;
   }
+  if (req.method === 'POST' && req.url === '/api/script') {
+    await routeApi(scriptHandler, req, res);
+    return;
+  }
 
-  // Save canvas data to file
+  // Save canvas data — one file per project (data/{projectId}.json) so projects never
+  // overwrite each other, written atomically (tmp + rename) so a crash can't leave a half file.
   if (req.method === 'POST' && req.url === '/api/save') {
     const body = await readBody(req);
     try {
-      writeFileSync(DATA_FILE, body, 'utf8');
+      let projectId = null;
+      try { projectId = JSON.parse(body).projectId; } catch {}
+      const target = projectId ? projectFile(projectId) : DATA_FILE;
+      if (!target) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"invalid projectId"}');
+        return;
+      }
+      const tmp = target + '.tmp';
+      writeFileSync(tmp, body, 'utf8');
+      renameSync(tmp, target);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{"ok":true}');
     } catch (err) {
@@ -110,11 +134,13 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Load canvas data from file
-  if (req.method === 'GET' && req.url === '/api/data') {
-    if (existsSync(DATA_FILE)) {
+  // Load canvas data — per project (?project={id}), falling back to the legacy single file.
+  if (req.method === 'GET' && req.url.startsWith('/api/data')) {
+    const pid = new URL(req.url, 'http://localhost').searchParams.get('project');
+    const target = pid ? projectFile(pid) : DATA_FILE;
+    if (target && existsSync(target)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      createReadStream(DATA_FILE).pipe(res);
+      createReadStream(target).pipe(res);
     } else {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('null');

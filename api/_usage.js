@@ -4,14 +4,19 @@ const PRICE_INPUT = 3 / 1_000_000;
 const PRICE_OUTPUT = 15 / 1_000_000;
 
 const usage = {
-  expand: { calls: 0, inputTokens: 0, outputTokens: 0 },
-  review: { calls: 0, inputTokens: 0, outputTokens: 0 },
-  ask:    { calls: 0, inputTokens: 0, outputTokens: 0 },
-  brief:  { calls: 0, inputTokens: 0, outputTokens: 0 },
+  expand:   { calls: 0, inputTokens: 0, outputTokens: 0 },
+  review:   { calls: 0, inputTokens: 0, outputTokens: 0 },
+  ask:      { calls: 0, inputTokens: 0, outputTokens: 0 },
+  brief:    { calls: 0, inputTokens: 0, outputTokens: 0 },
+  plan:     { calls: 0, inputTokens: 0, outputTokens: 0 },
+  script:   { calls: 0, inputTokens: 0, outputTokens: 0 },
+  classify: { calls: 0, inputTokens: 0, outputTokens: 0 },
 };
 
 export function addUsage(endpoint, inputTokens, outputTokens) {
-  if (!usage[endpoint]) return;
+  // Warn instead of silently dropping: an untracked endpoint (e.g. plan, the priciest call)
+  // would otherwise vanish from the cost dashboard and skew the "is it worth keeping" call.
+  if (!usage[endpoint]) { console.warn(`[usage] unknown endpoint "${endpoint}" — cost not tracked, add a bucket`); return; }
   usage[endpoint].calls++;
   usage[endpoint].inputTokens += inputTokens;
   usage[endpoint].outputTokens += outputTokens;

@@ -155,12 +155,20 @@ function saveState() {
   }
 }
 
+let _saveTimer = null;
 function saveToFile(data) {
-  fetch('/api/save', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  }).catch(() => {});
+  // Debounce: saveState() fires on nearly every drag/edit (~50 call sites); coalesce the
+  // ~36KB POSTs into one. localStorage in saveState() is the instant store, so a small lag
+  // on this durable per-project server copy is safe. projectId routes it to data/{id}.json
+  // so projects never overwrite each other (was: single canvas-data.json for all).
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, projectId: currentProjectId }),
+    }).catch(() => {});
+  }, 800);
 }
 
 async function loadState() {
@@ -4069,180 +4077,6 @@ function showModal(x, y, preselectedStage = '') {
 function hideModal() {
   $('#modal-overlay').classList.add('hidden');
   state.pendingPosition = null;
-}
-
-// ── Parse flow ──
-
-async function runParseFlow(input) {
-  hideModal();
-  // Show loading in panel
-  hideAllPanels();
-  const panel = $('#panel-parse');
-  panel.classList.remove('hidden');
-  $('#parse-content').innerHTML = '<div class="panel-loading">AI 解讀中…</div>';
-
-  try {
-    const result = await callParseApi(input);
-    renderParseResult(result, input);
-  } catch (err) {
-    $('#parse-content').innerHTML = `<div class="panel-error">解讀失敗：${esc(err.message)}</div>`;
-  }
-}
-
-async function callParseApi(input) {
-  const res = await fetch('/api/parse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input }),
-  });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    throw new Error(e.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-function renderParseResult(parseResult, originalInput = '') {
-  const directionLabels = { 'product-led': '從產品出發', 'content-led': '從內容出發', 'no-product': '純內容' };
-  const roleLabels = { 'main': '主影片', 'child': '剪片', 'sibling': '系列', 'standalone': '獨立' };
-  const formatIcon = { 'long': '📹', 'short': '📱' };
-
-  let html = '';
-
-  html += `<div class="parse-direction-block">
-    <div class="parse-direction-tag">${directionLabels[parseResult.direction] || parseResult.direction}</div>
-    <div class="parse-direction-explain">${esc(parseResult.directionExplain || '')}</div>
-  </div>`;
-
-  html += `<div class="parse-videos-label">建議影片 ${parseResult.videos?.length || 0} 支</div>`;
-  (parseResult.videos || []).forEach(v => {
-    html += `<div class="parse-video-card">
-      <div class="parse-video-icon">${formatIcon[v.format] || '📹'}</div>
-      <div class="parse-video-body">
-        <div class="parse-video-topic">${esc(v.topic)}</div>
-        <div class="parse-video-meta">
-          <span class="parse-video-badge role-${v.role || 'standalone'}">${roleLabels[v.role] || v.role}</span>
-          <span class="parse-video-badge">${v.format === 'short' ? '短片' : '長片'}</span>
-          ${v.suggestedStage ? `<span class="parse-video-badge">${v.suggestedStage} ${JOURNEY_LABELS[v.suggestedStage] || ''}</span>` : ''}
-          ${v.suggestedJob ? `<span class="parse-video-badge">${v.suggestedJob}</span>` : ''}
-        </div>
-      </div>
-    </div>`;
-  });
-
-  if (parseResult.clipOpportunities?.length > 0) {
-    html += `<div class="parse-clip-block">
-      <div class="parse-clip-label">✂ 剪片機會 ${parseResult.clipOpportunities.length} 個</div>`;
-    parseResult.clipOpportunities.forEach(c => {
-      html += `<div class="parse-clip-item">${esc(c.moment)} → ${esc(c.format)}${c.suggestedHook ? ` — 「${esc(c.suggestedHook)}」` : ''}</div>`;
-    });
-    html += `</div>`;
-  }
-
-  if (parseResult.gapSuggestions?.length > 0) {
-    html += `<div class="parse-gap-block">
-      <div class="parse-gap-label">💡 AI 建議補充 — 覆蓋不足的階段</div>`;
-    parseResult.gapSuggestions.forEach((g, i) => {
-      html += `<label class="parse-gap-item">
-        <input type="checkbox" class="parse-gap-check" data-gap-idx="${i}" checked>
-        <div class="parse-gap-body">
-          <div class="parse-gap-topic">${esc(g.topic)}</div>
-          <div class="parse-gap-meta">
-            <span class="parse-video-badge">${g.format === 'short' ? '短片' : '長片'}</span>
-            ${g.suggestedStage ? `<span class="parse-video-badge">${g.suggestedStage} ${JOURNEY_LABELS[g.suggestedStage] || ''}</span>` : ''}
-            ${g.suggestedJob ? `<span class="parse-video-badge">${g.suggestedJob}</span>` : ''}
-          </div>
-          <div class="parse-gap-reason">${esc(g.gapReason || '')}</div>
-        </div>
-      </label>`;
-    });
-    html += `</div>`;
-  }
-
-  if (parseResult.missingInfo) {
-    html += `<div class="parse-missing">⚠ ${esc(parseResult.missingInfo)}</div>`;
-  }
-
-  html += `<div class="parse-refine-block">
-    <label class="parse-refine-label">想調整這個規劃？</label>
-    <textarea id="parse-refine-input" class="parse-refine-textarea" rows="2" placeholder="例：我想要更多短片、把前兩支合成一支、主力放在 A 認知階段…"></textarea>
-    <button class="parse-refine-btn" id="parse-rerun-btn">重新解讀 ↺</button>
-  </div>`;
-
-  html += `<div class="parse-confirm-row">
-    <button class="parse-cancel-btn" id="parse-cancel-nodes">取消</button>
-    <button class="parse-confirm-btn" id="parse-confirm-nodes">確認，建立節點 →</button>
-  </div>`;
-
-  $('#parse-content').innerHTML = html;
-
-  document.getElementById('parse-rerun-btn').addEventListener('click', async () => {
-    const refinement = document.getElementById('parse-refine-input').value.trim();
-    if (!refinement) return;
-    const combinedInput = originalInput
-      ? `${originalInput}\n\n調整方向：${refinement}`
-      : refinement;
-    hideAllPanels();
-    const panel = $('#panel-parse');
-    panel.classList.remove('hidden');
-    $('#parse-content').innerHTML = '<div class="panel-loading">AI 重新解讀中…</div>';
-    try {
-      const result = await callParseApi(combinedInput);
-      renderParseResult(result, combinedInput);
-    } catch (err) {
-      $('#parse-content').innerHTML = `<div class="panel-error">解讀失敗：${esc(err.message)}</div>`;
-    }
-  });
-
-  document.getElementById('parse-confirm-nodes').addEventListener('click', () => {
-    const checkedGaps = [...document.querySelectorAll('.parse-gap-check:checked')]
-      .map(el => parseResult.gapSuggestions[parseInt(el.dataset.gapIdx, 10)])
-      .filter(Boolean);
-    confirmParseNodes(parseResult, checkedGaps);
-  });
-  document.getElementById('parse-cancel-nodes').addEventListener('click', () => {
-    hideAllPanels();
-    renderEmptyPanel();
-  });
-}
-
-function confirmParseNodes(parseResult, gapSuggestions = []) {
-  const area = $('#canvas-area');
-  const baseX = area.scrollLeft + 60;
-  const baseY = area.scrollTop + 60;
-  const videos = [...(parseResult.videos || []), ...gapSuggestions];
-
-  videos.forEach((v, i) => {
-    const col = i % 3;
-    const row = Math.floor(i / 3);
-    const node = createNode({
-      topic: v.topic,
-      job: v.suggestedJob || v.suggestedJob || '',
-      isMain: v.role === 'main',
-    }, baseX + col * 280, baseY + row * 220);
-
-    if (v.suggestedStage) {
-      node.positions.journey = node.positions.journey || {};
-      node.positions.journey.stage = v.suggestedStage;
-    }
-    if (v.format) {
-      node.positions.material = node.positions.material || {};
-      node.positions.material.column = v.format;
-    }
-    if (v.userIdeas?.length > 0) {
-      node.user = v.userIdeas.join('\n');
-    }
-    if (parseResult.sharedContext) {
-      node.sharedContext = parseResult.sharedContext;
-    }
-  });
-
-  saveState();
-  render();
-  hideAllPanels();
-  renderEmptyPanel();
-  const total = videos.length;
-  showToast(`✅ 已建立 ${total} 個節點 — 切到「購買階段」檢查覆蓋`);
 }
 
 // ── 發散：從節點深度衍生 3 個候選新影片（一按發散）──
