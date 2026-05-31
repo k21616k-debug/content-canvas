@@ -1362,7 +1362,8 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
   position: sticky; top: 0; z-index: 90;
   background: rgba(255,255,255,0.95); backdrop-filter: blur(8px);
   border-bottom: 1px solid #e2e8f0;
-  padding: 8px 16px; font-size: 12px;
+  /* top padding 讓出浮動的 #topic-toolbar（absolute, top:10px, z-index:100），否則它會壓住健康列頂部 */
+  padding: 48px 16px 8px; font-size: 12px;
 }
 .health-row {
   display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
@@ -1532,7 +1533,7 @@ h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 
 @media (max-width: 768px) {
   /* Health bar mobile */
-  .canvas-health-bar { padding: 6px 10px; }
+  .canvas-health-bar { padding: 48px 10px 6px; }
   .health-row { gap: 8px; }
   .health-group { gap: 3px; }
   .health-label { display: none; }
