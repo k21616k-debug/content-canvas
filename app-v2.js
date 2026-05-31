@@ -4087,11 +4087,16 @@ function hideModal() {
 
 let _divergeCands = [];
 let _divergeSource = null;
+let _divergeBusy = false; // guards against a 2nd /api/expand while one diverge is still running
 function resetDiverge() { _divergeCands = []; _divergeSource = null; }
 
 async function divergeFromNode(nodeId) {
   const node = state.nodes.get(nodeId);
   if (!node) return;
+  // Guard: clicking 發散 again while one is running (e.g. after switching views and not finding
+  // the loading panel) would fire a 2nd paid /api/expand call. Block it with a clear message.
+  if (_divergeBusy) { showToast('🌿 發散還在跑（約 1 分鐘）…結果會出現在右側面板，不用再按'); return; }
+  _divergeBusy = true;
 
   // 必修1: a diverge has no "selected node" — otherwise adopt's render()→renderPanel()
   // re-shows the source node's detail panel and hides the candidate list (the 3-選-1 bug).
@@ -4142,6 +4147,8 @@ async function divergeFromNode(nodeId) {
   } catch (err) {
     $('#panel-parse')?.classList.remove('hidden');
     $('#parse-content').innerHTML = `<div class="panel-error">發散失敗：${esc(err.message)}</div>`;
+  } finally {
+    _divergeBusy = false;
   }
 }
 
