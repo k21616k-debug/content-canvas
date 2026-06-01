@@ -1695,7 +1695,10 @@ function renderPanel() {
       <div class="detail-divider"></div>
 
       <div class="detail-section">
-        <label>📦 你知道的產品／內容知識 <span class="field-hint-inline">— AI 擴寫的原料，寫越多越準</span></label>
+        <div class="field-label-row">
+          <label>📦 你知道的產品／內容知識 <span class="field-hint-inline">— AI 擴寫的原料，寫越多越準</span></label>
+          <button type="button" class="field-expand-btn" id="btn-expand-editor" title="放大編輯">⛶ 放大</button>
+        </div>
         <textarea id="edit-user" rows="3" placeholder="例：600D 防潑水尼龍、16吋筆電艙、磁扣開口、台灣代理保固 2 年、比同類輕 200g...">${esc(node.user)}</textarea>
         ${!node.user && !node.aiResearch ? `<div class="inline-node-hint inline-node-hint-warn">⚠️ 空著直接擴寫，AI 只能靠猜——先寫幾個你研究過的產品重點，擴寫結果才有根據</div>` : ''}
         <button class="expand-btn" id="btn-expand" title="根據你的筆記，用 AI 自動擴寫成影片企劃">✨ AI 擴寫企劃</button>
@@ -1960,6 +1963,10 @@ function renderPanel() {
     ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main', '#edit-status'].forEach(sel => {
       const el = $(sel);
       if (el) el.addEventListener('change', autoSaveNode);
+    });
+
+    $('#btn-expand-editor')?.addEventListener('click', () => {
+      openFocusEditor(node.main.topic ? `編輯中：${node.main.topic}` : '');
     });
 
     $('#btn-delete-node').addEventListener('click', () => {
@@ -4120,6 +4127,29 @@ function hideModal() {
   state.pendingPosition = null;
 }
 
+// ── 放大編輯：把核心「內容知識」欄展開成大寫作視窗，寫回同一欄走現有存檔路徑 ──
+function openFocusEditor(contextLabel = '') {
+  const src = $('#edit-user');
+  if (!src) return; // 只能從節點詳情面板開啟
+  const ta = $('#focus-editor-textarea');
+  ta.value = src.value;
+  $('#focus-editor-context').textContent = contextLabel || '';
+  $('#focus-editor-overlay').classList.remove('hidden');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function closeFocusEditor() {
+  const overlay = $('#focus-editor-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+  const src = $('#edit-user');
+  if (src) {
+    src.value = $('#focus-editor-textarea').value;
+    src.dispatchEvent(new Event('blur')); // 走現有 autoSaveNode 存檔，不另造路徑
+  }
+  overlay.classList.add('hidden');
+}
+
 // ── 發散：從節點深度衍生 3 個候選新影片（一按發散）──
 
 let _divergeCands = [];
@@ -4571,6 +4601,20 @@ function bindEvents() {
     if (e.target === e.currentTarget) hideModal();
   });
 
+  // 放大編輯視窗：完成／✕／點背景 都關閉並寫回；打字即時鏡射回小框當保險；⌘/Ctrl+Enter 完成
+  $('#focus-editor-done').addEventListener('click', closeFocusEditor);
+  $('#focus-editor-close').addEventListener('click', closeFocusEditor);
+  $('#focus-editor-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeFocusEditor();
+  });
+  $('#focus-editor-textarea').addEventListener('input', () => {
+    const src = $('#edit-user');
+    if (src) src.value = $('#focus-editor-textarea').value;
+  });
+  $('#focus-editor-textarea').addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') closeFocusEditor();
+  });
+
   $('#parse-close').addEventListener('click', () => {
     resetDiverge();
     hideAllPanels();
@@ -4781,6 +4825,11 @@ function bindEvents() {
       const helpEl = document.getElementById('shortcut-overlay');
       if (helpEl && !helpEl.classList.contains('hidden')) {
         helpEl.classList.add('hidden');
+        return;
+      }
+      const feEl = document.getElementById('focus-editor-overlay');
+      if (feEl && !feEl.classList.contains('hidden')) {
+        closeFocusEditor();
         return;
       }
       if (!$('#modal-overlay').classList.contains('hidden')) {

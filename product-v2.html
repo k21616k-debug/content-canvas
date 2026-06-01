@@ -144,6 +144,24 @@
     </div>
   </div>
 
+  <!-- Focus editor (放大編輯 for 內容知識) -->
+  <div id="focus-editor-overlay" class="hidden">
+    <div id="focus-editor">
+      <div id="focus-editor-header">
+        <div>
+          <h3>📦 你知道的產品／內容知識 <span class="fe-hint">— AI 擴寫的原料，寫越多越準</span></h3>
+          <div id="focus-editor-context"></div>
+        </div>
+        <button type="button" id="focus-editor-close" title="關閉" aria-label="關閉">✕</button>
+      </div>
+      <textarea id="focus-editor-textarea" placeholder="例：600D 防潑水尼龍、16吋筆電艙、磁扣開口、台灣代理保固 2 年、比同類輕 200g..."></textarea>
+      <div id="focus-editor-footer">
+        <span class="fe-tip">⌘/Ctrl + Enter 或 Esc 完成 — 自動寫回並儲存</span>
+        <button type="button" id="focus-editor-done" class="primary">完成</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Project picker -->
   <div id="project-picker" class="hidden">
     <div class="picker-container">
