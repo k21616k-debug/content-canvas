@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>樣稿：一按發散長這樣</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif; background: #f1f5f9; color: #1e293b; line-height: 1.5; padding: 28px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .mock-tag { display:inline-block; background:#fef3c7; color:#92400e; font-size:12px; font-weight:600; padding:3px 10px; border-radius:999px; margin-bottom:14px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color:#64748b; font-size:13px; margin-bottom:22px; }
+
+  /* 控制列 */
+  .control { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 20px; margin-bottom:18px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .control .node-on { font-size:13px; color:#475569; margin-bottom:14px; }
+  .control .node-on b { color:#0f172a; }
+  .dials { display:flex; gap:26px; flex-wrap:wrap; align-items:center; }
+  .dial-group { display:flex; align-items:center; gap:8px; }
+  .dial-label { font-size:12px; color:#94a3b8; }
+  .seg { display:inline-flex; border:1px solid #cbd5e1; border-radius:10px; overflow:hidden; }
+  .seg button { border:none; background:#fff; padding:7px 14px; font-size:13px; cursor:pointer; color:#475569; }
+  .seg button.on { background:#4f46e5; color:#fff; font-weight:600; }
+  .go { margin-left:auto; background:#4f46e5; color:#fff; border:none; padding:11px 22px; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(79,70,229,.3); }
+  .based-on { margin-top:12px; font-size:12px; color:#16a34a; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:7px 12px; }
+
+  /* 平行生成中 */
+  .gen-strip { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:14px 18px; margin-bottom:18px; }
+  .gen-strip h3 { font-size:13px; color:#475569; margin-bottom:10px; font-weight:600; }
+  .helpers { display:flex; gap:10px; flex-wrap:wrap; }
+  .helper { flex:1; min-width:200px; font-size:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:9px; padding:9px 12px; display:flex; align-items:center; gap:8px; }
+  .helper .dot { width:8px; height:8px; border-radius:50%; background:#22c55e; }
+  .helper .spin { color:#94a3b8; }
+
+  /* 候選卡 */
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 1px 3px rgba(0,0,0,.04); display:flex; flex-direction:column; }
+  .card .title { font-size:15px; font-weight:700; color:#0f172a; margin-bottom:10px; }
+  .badges { display:flex; gap:6px; margin-bottom:10px; }
+  .badge { font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px; }
+  .b-attract { background:#eff6ff; color:#1d4ed8; }
+  .b-nurture { background:#fefce8; color:#a16207; }
+  .b-convert { background:#f0fdf4; color:#15803d; }
+  .b-stage { background:#f1f5f9; color:#475569; }
+  .row { font-size:13px; margin-bottom:9px; }
+  .row .k { color:#94a3b8; font-size:11px; display:block; margin-bottom:1px; }
+  .row .v { color:#334155; }
+  .verified { display:inline-flex; align-items:center; gap:4px; background:#ecfeff; color:#0e7490; font-size:11px; padding:1px 7px; border-radius:6px; margin-left:6px; }
+  .hook { font-style:italic; color:#7c3aed; background:#faf5ff; border-radius:7px; padding:6px 10px; font-size:13px; }
+  .actions { display:flex; gap:7px; margin-top:13px; padding-top:12px; border-top:1px solid #f1f5f9; }
+  .actions button { flex:1; border:1px solid #e2e8f0; background:#fff; border-radius:8px; padding:7px 0; font-size:12.5px; cursor:pointer; color:#475569; }
+  .actions .adopt { background:#4f46e5; color:#fff; border-color:#4f46e5; font-weight:600; }
+  .actions .drop:hover { background:#fef2f2; color:#dc2626; border-color:#fecaca; }
+  .foot { margin-top:20px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:14px 18px; font-size:13px; color:#3730a3; }
+  .foot b { color:#1e1b4b; }
+  .legend { margin-top:8px; font-size:12px; color:#64748b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="mock-tag">畫面樣稿 · 非實際功能 · 用你的騎士背包專案當例子</div>
+  <h1>「一按發散」這一輪，畫面長這樣</h1>
+  <div class="sub">你不用按四五顆按鈕、也不用一塊塊檢查。轉一下方向盤、按一下，幾個 AI 幫手同時各深挖一個方向，把候選攤給你挑。</div>
+
+  <!-- 控制列 -->
+  <div class="control">
+    <div class="node-on">正在這支影片上操作 → <b>「騎士背包三種類型完整比較：軟包 vs 硬殼包 vs 防水包」</b></div>
+    <div class="dials">
+      <div class="dial-group"><span class="dial-label">方向</span>
+        <span class="seg"><button class="on">發散（給我更多）</button><button>收斂（幫我收）</button></span>
+      </div>
+      <div class="dial-group"><span class="dial-label">範圍</span>
+        <span class="seg"><button>這支影片</button><button class="on">整個計劃</button></span>
+      </div>
+      <button class="go">⚡ 生成這一輪</button>
+    </div>
+    <div class="based-on">↑ 這一輪會根據：你已採用的 2 個方向 ＋ 上網查證的資料 → 一輪比一輪準</div>
+  </div>
+
+  <!-- 平行生成中 -->
+  <div class="gen-strip">
+    <h3>剛剛按下後（約 1 分鐘）：4 個幫手同時深挖，不是一個一個等</h3>
+    <div class="helpers">
+      <div class="helper"><span class="dot"></span>幫手1：防水包情境 ✓</div>
+      <div class="helper"><span class="dot"></span>幫手2：硬殼包護脊 ✓</div>
+      <div class="helper"><span class="dot"></span>幫手3：軟包痛點 ✓</div>
+      <div class="helper"><span class="dot"></span>幫手4：怎麼選 ✓</div>
+    </div>
+  </div>
+
+  <!-- 候選卡 -->
+  <div class="grid">
+
+    <div class="card">
+      <div class="title">Stream Trail 防水包實測：梅雨季騎車，包裡的筆電會濕嗎？</div>
+      <div class="badges"><span class="badge b-convert">轉換</span><span class="badge b-stage">階段 C · 信任</span></div>
+      <div class="row"><span class="k">切入點（為什麼這支值得拍）</span><span class="v">市面這款包的內容全是水上活動視角（衝浪、SUP），沒人從「騎士淋雨」情境實測<span class="verified">🌐 已查證</span></span></div>
+      <div class="hook">「下雨天，你背上的筆電真的安全嗎？」</div>
+      <div class="actions"><button class="adopt">✓ 採用</button><button class="drop">✗ 丟棄</button><button>🔗 連結</button><button>⊕ 合併</button></div>
+    </div>
+
+    <div class="card">
+      <div class="title">Boblbee 硬殼包護脊是真的嗎？摔車測給你看</div>
+      <div class="badges"><span class="badge b-nurture">培育</span><span class="badge b-stage">階段 B · 評估</span></div>
+      <div class="row"><span class="k">切入點</span><span class="v">大家以為「護脊」＝「保護筆電」，其實是兩回事——這支把它拆清楚<span class="verified">🌐 已查證</span></span></div>
+      <div class="hook">「摔一次，背上這塊殼是救你還是壓你？」</div>
+      <div class="actions"><button class="adopt">✓ 採用</button><button class="drop">✗ 丟棄</button><button>🔗 連結</button><button>⊕ 合併</button></div>
+    </div>
+
+    <div class="card">
+      <div class="title">軟包最大缺點沒人講：長途騎乘的肩膀痛</div>
+      <div class="badges"><span class="badge b-attract">吸引</span><span class="badge b-stage">階段 A · 認知</span></div>
+      <div class="row"><span class="k">切入點</span><span class="v">軟包評測都在講「輕便」，沒人講久背的痛點——反向切，吸引新觀眾</span></div>
+      <div class="hook">「軟包很香，但騎兩小時你會後悔」</div>
+      <div class="actions"><button class="adopt">✓ 採用</button><button class="drop">✗ 丟棄</button><button>🔗 連結</button><button>⊕ 合併</button></div>
+    </div>
+
+    <div class="card">
+      <div class="title">三種包怎麼選？用你的「騎車情境」反推（懶人流程圖）</div>
+      <div class="badges"><span class="badge b-attract">吸引</span><span class="badge b-stage">階段 A · 認知</span></div>
+      <div class="row"><span class="k">切入點</span><span class="v">不比規格、比情境——這支能連回你的主比較片，當系列入口</span></div>
+      <div class="hook">「別問哪個包好，先問你怎麼騎」</div>
+      <div class="actions"><button class="adopt">✓ 採用</button><button class="drop">✗ 丟棄</button><button>🔗 連結</button><button>⊕ 合併</button></div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    挑完之後 → <b>採用的會自動接回畫布、變成新節點</b>（CTA／分類／重點都已填好，不用再一塊塊補）；丟掉的會告訴 AI「別往這走」。<br>
+    再按一次「生成這一輪」→ 它記得你這次的取捨，下一輪更準。這就是「一階段一階段累積」。
+    <div class="legend">🌐 已查證 ＝ 這個切入點是 AI 上網查過、不是憑空編的。</div>
+  </div>
+</div>
+
+<script>
+  // 讓你自己打開時點得動：採用→變色、丟棄→淡出
+  document.querySelectorAll('.card').forEach(card => {
+    card.querySelector('.adopt').addEventListener('click', () => {
+      card.style.outline = '2px solid #4f46e5'; card.style.background = '#fafaff';
+      card.querySelector('.adopt').textContent = '✓ 已採用';
+    });
+    card.querySelector('.drop').addEventListener('click', () => {
+      card.style.opacity = card.style.opacity === '0.4' ? '1' : '0.4';
+    });
+  });
+</script>
+</body>
+</html>
