@@ -213,6 +213,62 @@ ${existingTopics.length ? `\n畫布上已有的影片（含切入角度，用來
       return res.status(200).json(dresult);
     }
 
+    // ── Clip action: cut short-form entries OUT OF this long video ─────────────
+    // Pure derivation, NO web_search: a short here is a segment / highlight of the
+    // source long video, never a newly-invented topic (拼圖角色, 不腦補).
+    if (action === 'clip') {
+      const srcStage = req.body.stage || '';
+      const srcInsight = req.body.insight || '';
+      const clipPrompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的短影音企劃師。
+
+使用者有一支長片，想把它「切成幾支短片當入口」——不是發明新主題，是從這支長片本身切出可以單獨成立的短片片段。
+
+長片主題：「${topic}」${job ? `（用途：${job}）` : ''}${srcStage ? `（階段：${srcStage}）` : ''}
+${srcInsight ? `這支的切入點：${srcInsight}` : ''}
+${userNotes ? `相關筆記：${userNotes.substring(0, 400)}` : ''}
+
+請推導出 3 個「從這支長片切出來、適合單獨當短片入口」的短片點子。
+鐵則：只能是這支長片內容的片段／濃縮／單一亮點，禁止發明長片裡沒有的新主題。每支要能在 15–60 秒內讓新觀眾停下來。
+
+繁體中文，只回 JSON（不要加 markdown code block）：
+{
+  "candidates": [
+    {
+      "topic": "短片標題（具體、像短影音標題）",
+      "segment": "對應長片的哪一段／哪個亮點",
+      "suggestedHook": "前 3 秒鉤子，15 字內",
+      "platform": "建議平台（Reels／Shorts／TikTok 擇一或通用）",
+      "durationHint": "建議長度，如 30 秒"
+    }
+  ]
+}
+
+規則：3 個切點要不同（不同亮點／不同痛點），每個都必須源自長片內容，寧缺勿濫——不要為了湊滿而發明長片沒有的東西。`;
+
+      let cresult;
+      try {
+        const cm = await anthropic.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: clipPrompt }],
+        });
+        addUsage('expand', cm.usage.input_tokens, cm.usage.output_tokens);
+        const ctext = cm.content.filter(b => b.type === 'text').map(b => b.text).join('');
+        const cs = ctext.indexOf('{'); const ce = ctext.lastIndexOf('}');
+        cresult = JSON.parse((cs >= 0 && ce > cs) ? ctext.slice(cs, ce + 1) : ctext);
+      } catch (cErr) {
+        if (cErr?.status === 429) {
+          return res.status(429).json({ error: '查詢太密集，請等約一分鐘再切一次' });
+        }
+        console.warn('Clip failed:', cErr.message);
+        return res.status(200).json({ candidates: [], error: 'AI 回傳格式出問題，請再試一次' });
+      }
+      cresult.candidates = (cresult.candidates || []).filter(
+        c => c && typeof c.topic === 'string' && c.topic.trim()
+      );
+      return res.status(200).json(cresult);
+    }
+
     // ── Main expand ──────────────────────────────────────────────────────────
     const { stage } = req.body;
     const STAGE_LABELS = { A: 'A 認知', B: 'B 評估', C: 'C 信任', D: 'D 安心' };

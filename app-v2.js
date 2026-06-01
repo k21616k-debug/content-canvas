@@ -1912,6 +1912,7 @@ function renderPanel() {
       </div>
       <div class="detail-node-actions">
         <button class="diverge-btn" id="btn-diverge" title="從這支影片深度發散 3 個延伸影片">🌿 發散</button>
+        ${node.positions?.material?.column !== 'short' ? `<button class="diverge-btn" id="btn-cut-shorts" title="把這支長片切成幾支短片入口（有拍攝角度就挑、沒有 AI 幫你想）">✂ 切短片</button>` : ''}
         <button class="merge-btn" id="btn-merge" title="把其他節點合併進來">🔀 收攏</button>
       </div>
       <div class="detail-danger-zone">
@@ -1990,6 +1991,7 @@ function renderPanel() {
     });
 
     $('#btn-diverge').addEventListener('click', () => divergeFromNode(node.id));
+    $('#btn-cut-shorts')?.addEventListener('click', () => cutToShorts(node.id));
 
     $('#btn-merge').addEventListener('click', () => showMergePicker(node.id));
 
@@ -2227,7 +2229,7 @@ function renderPanel() {
       btn.textContent = '⏳';
       try {
         const result = await aiAsk(q, node.id);
-        if (result) renderAskResult($('#ask-node-result'), result);
+        if (result) renderAskResult($('#ask-node-result'), result, node);
       } catch (err) {
         $('#ask-node-result').innerHTML = `<div class="ask-error">⚠️ AI 回覆失敗：${err.message || '請確認網路連線或稍後再試'}</div>`;
       } finally {
@@ -2663,8 +2665,15 @@ function describeAction(action) {
   return action.label || '套用';
 }
 
-function renderAskResult(container, result) {
+function renderAskResult(container, result, focusNode) {
   let html = `<div class="ask-answer">${esc(result.answer)}</div>`;
+  // Node-specific ask: let the prose answer be saved back into the node's notes
+  // (node.user) instead of stranding it in the bubble. node.user is read by aiAsk
+  // and sent as userNotes to expand/diverge, so an adopted answer also feeds the
+  // next 擴寫/發散/提問 round.
+  if (focusNode && result.answer?.trim()) {
+    html += `<button class="ai-action-btn adopt ask-adopt-btn" style="margin-top:6px">💾 存回節點筆記</button>`;
+  }
   if (result.actions?.length > 0) {
     html += `<div class="ask-actions">`;
     result.actions.forEach((a, i) => {
@@ -2678,6 +2687,16 @@ function renderAskResult(container, result) {
     html += `</div>`;
   }
   container.innerHTML = html;
+  if (focusNode) {
+    container.querySelector('.ask-adopt-btn')?.addEventListener('click', () => {
+      pushUndo();
+      const prev = (focusNode.user || '').trim();
+      focusNode.user = (prev ? prev + '\n\n' : '') + '💡 ' + result.answer.trim();
+      saveState();
+      render(); renderPanel(focusNode);
+      showToast('✅ 已存回節點筆記，下一輪擴寫/發散會帶上');
+    });
+  }
   container.querySelectorAll('.ask-action-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.actionIdx, 10);
@@ -3972,6 +3991,24 @@ function autoArrangeNodes() {
   const LANE_W = 360, LANE_GAP = 20, LANE_PAD_X = 40;
   const LANE_PAD_TOP = 80, CARD_H = 140, CARD_GAP_Y = 20;
 
+  // The first row must clear the overlays pinned to the top of #canvas-area: the
+  // opaque sticky health bar (.canvas-health-bar, ≥~80px and taller when it wraps)
+  // and the floating #topic-toolbar (absolute, top:10). Measure their live bottom
+  // edge so a wrapped health bar / mobile padding / hidden toolbar all self-adjust,
+  // then divide by zoom (canvas uses transform:scale, origin 0 0) to get canvas units.
+  // A fixed LANE_PAD_TOP=80 sat under the health bar — that is the reported overlap.
+  const _area = document.getElementById('canvas-area');
+  const _areaTop = _area ? _area.getBoundingClientRect().top : 0;
+  const _overlayBottom = (el) => el ? (el.getBoundingClientRect().bottom - _areaTop) : 0;
+  const _hb = document.querySelector('.canvas-health-bar');
+  const _tb = document.getElementById('topic-toolbar');
+  const _overlayPx = Math.max(
+    _overlayBottom(_hb),
+    (_tb && !_tb.classList.contains('hidden')) ? _overlayBottom(_tb) : 0,
+  );
+  const _z = state.zoomLevel || 1;
+  const TOP_INSET = Math.max(LANE_PAD_TOP, Math.ceil(_overlayPx / _z) + 20);
+
   // Kahn's topological sort within a stage group (respects connection order)
   function topoSort(group) {
     if (group.length <= 1) return group;
@@ -4021,12 +4058,12 @@ function autoArrangeNodes() {
     const sorted = topoSort(byStage[STAGES[si]]);
     sorted.sort((a, b) => (b.isMain ? 1 : 0) - (a.isMain ? 1 : 0));
     sorted.forEach((n, row) => {
-      n.positions.topic = { x: laneLeft + LANE_PAD_X, y: LANE_PAD_TOP + row * (CARD_H + CARD_GAP_Y) };
+      n.positions.topic = { x: laneLeft + LANE_PAD_X, y: TOP_INSET + row * (CARD_H + CARD_GAP_Y) };
     });
   }
   const rightX = STAGES.length * (LANE_W + LANE_GAP) + 20;
   noStage.forEach((n, i) => {
-    n.positions.topic = { x: rightX, y: LANE_PAD_TOP + i * (CARD_H + CARD_GAP_Y) };
+    n.positions.topic = { x: rightX, y: TOP_INSET + i * (CARD_H + CARD_GAP_Y) };
   });
 
   const canvasEl = document.getElementById('canvas-area');
@@ -4212,6 +4249,125 @@ function adoptDivergeCandidate(idx, btn) {
   // 必修1: with selectedNodeId null, render()→renderPanel() leaves the visible parse
   // panel alone, so the remaining candidates stay adoptable.
   showToast(`✅ 已採用「${c.topic.slice(0, 12)}」，已連回來源 — 建議再擴寫補完`);
+  if (btn) { btn.textContent = '✓ 已採用'; btn.disabled = true; const card = btn.closest('.diverge-card'); if (card) card.style.opacity = '0.55'; }
+}
+
+// ── 切短片：把一支長片切成幾支短片入口（混合：有拍攝角度就挑、沒有就 AI 推導）──
+
+let _clipCands = [];
+let _clipSource = null;
+let _clipBusy = false;
+function resetClip() { _clipCands = []; _clipSource = null; }
+
+async function cutToShorts(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  // 跟發散一樣：清掉選取節點，否則採用後 render()→renderPanel() 會把候選蓋掉。
+  state.selectedNodeId = null;
+  resetClip();
+  hideAllPanels();
+  $('#panel-parse').classList.remove('hidden');
+
+  // Path A（拼圖）：長片已有拍攝角度＝現成的「片段」，直接列出來挑，不呼叫 AI、即時、免費。
+  const angles = node.filmingAngles || [];
+  if (angles.length) {
+    const cands = angles.map(a => ({
+      topic: `短片：${a.title}`,
+      segment: a.title,
+      suggestedHook: node.aiResearch?.suggestedHook || '',
+      platform: '', durationHint: '',
+    }));
+    renderClipCandidates(node, cands, { fromAngles: true });
+    return;
+  }
+
+  // Path B：長片還沒擴寫、沒有角度 → AI 從主題/筆記推導短片切點（純推導，不上網）。
+  if (_clipBusy) { showToast('✂ 切短片還在跑…結果會出現在右側面板'); return; }
+  _clipBusy = true;
+  $('#parse-content').innerHTML = '<div class="panel-loading"><div>✂ AI 正在從這支長片想短片切點…</div><div style="font-size:11px;color:#94a3b8;margin-top:6px">（約 20–40 秒）</div></div>';
+  try {
+    const res = await fetch('/api/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'clip',
+        topic: node.main.topic,
+        job: node.main.job,
+        stage: node.positions?.journey?.stage || '',
+        insight: node.aiResearch?.insight || '',
+        userNotes: node.user || '',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || (res.status === 429 ? '查詢太密集，請等約一分鐘再試一次' : '伺服器回 ' + res.status));
+    }
+    if (data.error && !data.candidates?.length) {
+      $('#parse-content').innerHTML = `<div class="panel-error">${esc(data.error)}</div>`;
+      return;
+    }
+    renderClipCandidates(node, data.candidates || [], { fromAngles: false });
+  } catch (err) {
+    $('#parse-content').innerHTML = `<div class="panel-error">切短片失敗：${esc(err.message)}</div>`;
+  } finally {
+    _clipBusy = false;
+  }
+}
+
+function renderClipCandidates(sourceNode, candidates, opts = {}) {
+  $('#panel-parse')?.classList.remove('hidden');
+  if (!candidates.length) {
+    $('#parse-content').innerHTML = '<div class="panel-error">沒有可切的段落 — 先對長片按「✨ AI 擴寫企劃」生出拍攝角度，再切短片會更準。</div>';
+    return;
+  }
+  _clipCands = candidates;
+  _clipSource = sourceNode.id;
+  const srcHint = opts.fromAngles ? '（從這支已有的拍攝角度切）' : '（AI 推導的短片切點）';
+  $('#parse-content').innerHTML = `
+    <div style="font-size:13px;color:#475569;margin-bottom:12px">✂ 從「${esc(sourceNode.main.topic)}」切出 ${candidates.length} 支短片入口 ${srcHint} — 挑你要的，採用就變短片接回長片</div>
+    ${candidates.map((c, i) => `
+      <div class="angle-card diverge-card" data-idx="${i}" style="margin-bottom:10px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:6px">${esc(c.topic)}</div>
+        ${c.segment ? `<div style="font-size:12px;color:#334155;margin-bottom:4px">🎬 對應段落：${esc(c.segment)}</div>` : ''}
+        ${c.suggestedHook ? `<div style="font-size:12px;color:#7c3aed;font-style:italic;margin-bottom:4px">Hook：「${esc(c.suggestedHook)}」</div>` : ''}
+        ${(c.platform || c.durationHint) ? `<div style="font-size:11px;color:#64748b;margin-bottom:8px">${[c.platform, c.durationHint].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+        <div style="display:flex;gap:6px">
+          <button class="ai-action-btn adopt clip-adopt-btn" data-idx="${i}" style="flex:1">✓ 採用（變短片）</button>
+          <button class="ai-action-btn clip-drop-btn" data-idx="${i}">✗ 丟棄</button>
+        </div>
+      </div>`).join('')}`;
+  $$('#parse-content .clip-adopt-btn').forEach(btn =>
+    btn.addEventListener('click', () => adoptClipCandidate(parseInt(btn.dataset.idx, 10), btn)));
+  $$('#parse-content .clip-drop-btn').forEach(btn =>
+    btn.addEventListener('click', () => btn.closest('.diverge-card')?.remove()));
+}
+
+function adoptClipCandidate(idx, btn) {
+  const c = _clipCands[idx];
+  if (!c) return;
+  const src = state.nodes.get(_clipSource);
+  if (!src) { showToast('來源長片已不存在，無法接回'); return; }
+  const sx = src.positions?.topic?.x || 200;
+  const sy = src.positions?.topic?.y || 200;
+  const newNode = createNode({ topic: c.topic, job: '吸引', cta: '' }, sx + 280, sy + 60 + idx * 50);
+  // 短片型別 = material 'short'：素材視圖會自動分到「短片」欄，renderNode 自帶 data-col。
+  newNode.positions.material = { column: 'short', order: idx };
+  // 短片繼承長片的購買階段（內容同源）；格式角色預設「吸引」（短片＝拉新入口）。
+  if (['A', 'B', 'C', 'D'].includes(src.positions?.journey?.stage)) {
+    newNode.positions.journey = { ...newNode.positions.journey, stage: src.positions.journey.stage };
+  }
+  // Hook／段落／平台存進 aiResearch（結構化欄，同 diverge），不塞 node.user 以免下次擴寫把它當成使用者硬需求放大。
+  newNode.aiResearch = {
+    insight: c.segment ? `來源長片段落：${c.segment}` : '',
+    suggestedHook: c.suggestedHook || '',
+    suggestedJob: '吸引', suggestedStage: src.positions?.journey?.stage || '', ctaSpoken: '',
+    audienceCares: '', searchKeywords: '',
+    clipPlatform: c.platform || '', clipDuration: c.durationHint || '',
+  };
+  state.connections.push({ from: src.id, to: newNode.id });
+  saveState();
+  render();
+  showToast(`✂ 已切出短片「${c.topic.slice(0, 12)}」，已連回長片`);
   if (btn) { btn.textContent = '✓ 已採用'; btn.disabled = true; const card = btn.closest('.diverge-card'); if (card) card.style.opacity = '0.55'; }
 }
 
