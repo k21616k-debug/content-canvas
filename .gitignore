@@ -3,3 +3,4 @@ node_modules/
 canvas-data.json
 .DS_Store
 .vercel
+server.log

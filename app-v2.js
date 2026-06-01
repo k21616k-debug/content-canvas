@@ -59,7 +59,34 @@ function saveProjectList(list) {
   localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(list));
 }
 
-function switchProject(projectId) {
+// Hydrate the project list from the server. /api/projects (one entry per data/*.json) is the
+// authoritative source for WHICH projects exist, so the list survives a browser-cache clear and
+// is consistent across machines. localStorage stays the cache for the user-chosen NAME (the
+// server can only derive a name from the first node's topic). Union by id: prefer the local name
+// when present, else fall back to the server's derived name. Offline → fall back to the cache.
+async function syncProjectListFromServer() {
+  try {
+    const res = await fetch('/api/projects');
+    const remote = await res.json(); // [{id,name,nodeCount,updatedAt}]
+    if (!Array.isArray(remote)) return getProjectList();
+    const local = getProjectList();
+    const localById = new Map(local.map(p => [p.id, p]));
+    const merged = remote.map(r => {
+      const l = localById.get(r.id);
+      return {
+        id: r.id,
+        name: (l && l.name) ? l.name : r.name,
+        createdAt: l?.createdAt || Date.now(),
+        updatedAt: r.updatedAt ? Date.parse(r.updatedAt) : (l?.updatedAt || Date.now()),
+        nodeCount: r.nodeCount,
+      };
+    });
+    saveProjectList(merged);
+    return merged;
+  } catch { return getProjectList(); }
+}
+
+async function switchProject(projectId) {
   const list = getProjectList();
   const project = list.find(p => p.id === projectId);
   if (!project) return;
@@ -78,12 +105,25 @@ function switchProject(projectId) {
   state.topicMode = 'free';
   state.zoomLevel = 1;
   state.dismissedSuggestions = new Set();
-  // Load this project's data
-  loadProjectState();
+  // Load this project's data (awaited so callers that await switchProject see loaded state;
+  // un-awaited callers still get a correct UI because loadProjectState calls render() itself).
+  await loadProjectState();
 }
 
-function loadProjectState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+async function loadProjectState() {
+  let raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    // Clean browser: localStorage empty but data/{id}.json may exist on the server.
+    // Mirror loadState — fetch the durable per-project file so picking a project that
+    // exists on disk does not show an empty canvas.
+    if (currentProjectId) {
+      try {
+        const res = await fetch('/api/data?project=' + encodeURIComponent(currentProjectId));
+        const text = await res.text();
+        if (text && text !== 'null') raw = text;
+      } catch { /* offline is fine */ }
+    }
+  }
   if (!raw) { render(); return; }
   try {
     const data = JSON.parse(raw);
@@ -114,6 +154,10 @@ function deleteProject(projectId) {
   list = list.filter(p => p.id !== projectId);
   saveProjectList(list);
   localStorage.removeItem('content-canvas-v2-' + projectId);
+  // Delete the durable server file too. /api/projects is now authoritative for existence, so
+  // without this the deleted project would resurrect in the list on the next reload (zombie).
+  // Fire-and-forget (matches saveToFile): the file delete is fast and the sync flow is unchanged.
+  fetch('/api/data?project=' + encodeURIComponent(projectId), { method: 'DELETE' }).catch(() => {});
   if (list.length === 0) {
     createProject('未命名專案');
   } else {
@@ -140,12 +184,17 @@ function renderProjectSelect() {
 // ── Persistence ──
 
 function saveState() {
+  // Include the user-chosen project name so the server's /api/projects (which reads d.projectName)
+  // can show the real name on a truly clean browser with no local name cache — instead of falling
+  // back to the first node's topic. Additive: no existing reader depends on this field.
+  const _projName = getProjectList().find(p => p.id === currentProjectId)?.name;
   const data = {
     currentView: state.currentView,
     nodes: [...state.nodes.entries()],
     connections: state.connections,
     dismissedSuggestions: [...state.dismissedSuggestions],
     topicListOrder: state.topicListOrder,
+    projectName: _projName,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   saveToFile(data);
@@ -178,8 +227,9 @@ function saveToFile(data) {
 async function loadState() {
   let raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
+    if (!currentProjectId) return; // no id resolved → nothing safe to load
     try {
-      const res = await fetch('/api/data');
+      const res = await fetch('/api/data?project=' + encodeURIComponent(currentProjectId));
       const text = await res.text();
       if (text && text !== 'null') raw = text;
     } catch { /* offline is fine */ }
@@ -5039,8 +5089,9 @@ async function init() {
     }
   });
 
-  // Bootstrap project system
-  let list = getProjectList();
+  // Bootstrap project system. Hydrate from the server FIRST so a clean browser (empty
+  // localStorage) sees the real projects in data/ instead of silently creating a new empty one.
+  let list = await syncProjectListFromServer();
   if (list.length === 0) {
     // First time: migrate old data into a default project, go straight in
     const id = 'p' + Date.now();

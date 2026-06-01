@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, createReadStream, mkdirSync, renameSync, readdirSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, createReadStream, mkdirSync, renameSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { createServer } from 'http';
 import { join, extname } from 'path';
 import { execSync, spawn } from 'child_process';
@@ -146,6 +146,18 @@ const server = createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  // Delete a project's data file. projectId guarded against traversal (same as save/load).
+  if (req.method === 'DELETE' && req.url.startsWith('/api/data')) {
+    const pid = new URL(req.url, 'http://localhost').searchParams.get('project');
+    const target = projectFile(pid);
+    if (!target) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"error":"invalid projectId"}'); return; }
+    try {
+      if (existsSync(target)) { unlinkSync(target); scheduleBackup(); }
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}');
+    } catch (err) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: err.message })); }
     return;
   }
 
