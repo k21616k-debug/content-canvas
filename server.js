@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, createReadStream, mkdirSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, createReadStream, mkdirSync, renameSync, readdirSync, statSync } from 'fs';
 import { createServer } from 'http';
 import { join, extname } from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import expandHandler from './api/expand.js';
 import reviewHandler from './api/review.js';
 import askHandler from './api/ask.js';
@@ -18,7 +18,6 @@ const GIT_HASH = (() => {
 const START_TIME = new Date().toISOString();
 
 const PORT = process.env.PORT || 3456;
-const DATA_FILE = join(import.meta.dirname, 'canvas-data.json');
 const DATA_DIR = join(import.meta.dirname, 'data');
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
@@ -26,6 +25,19 @@ if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 // client). Returns null for a bad id so the caller can 400 instead of writing anywhere.
 function projectFile(id) {
   return /^[A-Za-z0-9_-]+$/.test(id || '') ? join(DATA_DIR, id + '.json') : null;
+}
+
+// Runtime auto-backup: after a save, schedule a git commit of data/ off the response path so
+// save latency is never affected. A 10s debounce coalesces a burst of saves into ONE commit.
+// Non-blocking spawn (NOT execSync) so the event loop is never blocked while git runs.
+let _backupTimer = null;
+function scheduleBackup() {
+  clearTimeout(_backupTimer);
+  _backupTimer = setTimeout(() => {
+    spawn('sh', ['-c',
+      'git add data/ && git -c user.name=auto -c user.email=auto@local commit -q -m "autosave: $(date +%H:%M:%S)" --only data/ || true'
+    ], { cwd: import.meta.dirname, stdio: 'ignore', detached: true }).unref();
+  }, 10000);
 }
 
 const MIME = {
@@ -111,12 +123,14 @@ const server = createServer(async (req, res) => {
 
   // Save canvas data — one file per project (data/{projectId}.json) so projects never
   // overwrite each other, written atomically (tmp + rename) so a crash can't leave a half file.
+  // projectId is REQUIRED: without a valid one we 400 rather than write the legacy single file,
+  // so the single source of truth stays the per-project files in data/.
   if (req.method === 'POST' && req.url === '/api/save') {
     const body = await readBody(req);
     try {
       let projectId = null;
       try { projectId = JSON.parse(body).projectId; } catch {}
-      const target = projectId ? projectFile(projectId) : DATA_FILE;
+      const target = projectFile(projectId);
       if (!target) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end('{"error":"invalid projectId"}');
@@ -127,6 +141,7 @@ const server = createServer(async (req, res) => {
       renameSync(tmp, target);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{"ok":true}');
+      scheduleBackup();
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
@@ -134,10 +149,41 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Load canvas data — per project (?project={id}), falling back to the legacy single file.
+  // List projects — the authoritative project list, read from the data/ directory (the single
+  // source of truth) so the dropdown survives a browser-cache clear. One entry per data/*.json.
+  if (req.method === 'GET' && req.url.startsWith('/api/projects')) {
+    try {
+      const files = readdirSync(DATA_DIR).filter(
+        (f) => f.endsWith('.json') && !f.endsWith('.tmp') && !f.endsWith('.bak')
+      );
+      const projects = files.map((f) => {
+        const id = f.slice(0, -'.json'.length);
+        const full = join(DATA_DIR, f);
+        let name = id;
+        let nodeCount = 0;
+        try {
+          const d = JSON.parse(readFileSync(full, 'utf8'));
+          // nodes is a serialized Map: an array of [nodeId, nodeObject] pairs.
+          const nodes = d.nodes || [];
+          nodeCount = nodes.length;
+          name = d.projectName || nodes[0]?.[1]?.main?.topic || id;
+        } catch {}
+        return { id, name, nodeCount, updatedAt: statSync(full).mtime.toISOString() };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(projects));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Load canvas data — per project (?project={id}). No legacy fallback: without a valid project
+  // id we return null so load can only ever read the durable per-project files in data/.
   if (req.method === 'GET' && req.url.startsWith('/api/data')) {
     const pid = new URL(req.url, 'http://localhost').searchParams.get('project');
-    const target = pid ? projectFile(pid) : DATA_FILE;
+    const target = projectFile(pid);
     if (target && existsSync(target)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       createReadStream(target).pipe(res);
