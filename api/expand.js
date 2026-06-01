@@ -315,7 +315,9 @@ ${userNotes ? `使用者已知資訊：${userNotes.substring(0, 300)}` : '（使
     }
 
     // ── Build main expand prompt ─────────────────────────────────────────────
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略師。
+今天日期：${today}
 
 ## 工作原則：知識推導，不是文字接龍
 
