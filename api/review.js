@@ -3,6 +3,36 @@ import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
+async function runWithSearch(messages, model, maxTokens) {
+  const history = messages.map(m => ({ ...m }));
+  let totalIn = 0, totalOut = 0, searchCount = 0;
+  let accText = '';
+  for (let round = 0; round < 5; round++) {
+    const resp = await anthropic.messages.create({
+      model,
+      max_tokens: maxTokens,
+      tools: [{
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 3,
+        user_location: { type: 'approximate', country: 'TW', timezone: 'Asia/Taipei' },
+      }],
+      messages: history,
+    });
+    totalIn  += resp.usage?.input_tokens  ?? 0;
+    totalOut += resp.usage?.output_tokens ?? 0;
+    searchCount += resp.usage?.server_tool_use?.web_search_requests ?? 0;
+    const roundText = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    if (resp.stop_reason === 'pause_turn') {
+      accText += roundText;
+      history.push({ role: 'assistant', content: resp.content });
+      continue;
+    }
+    return { text: (accText + roundText).trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
+  }
+  return { text: accText.trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -32,7 +62,36 @@ export default async function handler(req, res) {
       ? connections.map(c => `${c.fromTopic} → ${c.toTopic}`).join('\n')
       : '（目前沒有連線）';
 
+    const topicsForSearch = nodes.map(n => n.topic).join('、');
+    const reviewSearchPrompt = `你是在幫台灣摩托車裝備 YouTube 頻道「摩托麻吉」做影片策略審查前的市場調查。
+
+畫布上的影片主題：${topicsForSearch}
+
+請使用 web search 查詢（優先查台灣市場）：
+1. 這些主題在台灣 YouTube 上已有哪些影片？競爭程度如何？
+2. 台灣騎士社群對這些主題目前討論最熱的是什麼？有哪些未被滿足的需求？
+3. 這些主題的搜尋關鍵字中，哪些有明顯的內容空白？
+
+查完後，條列整理事實。沒查到的項目標記「未找到」，不要猜。`;
+
+    let webFacts = '';
+    try {
+      const searchResult = await runWithSearch(
+        [{ role: 'user', content: reviewSearchPrompt }],
+        'claude-haiku-4-5-20251001',
+        2000
+      );
+      addUsage('review', searchResult.inputTokens, searchResult.outputTokens);
+      webFacts = searchResult.text;
+      if (!searchResult.searchCount) console.warn(`[review] pre-pass ran 0 web searches — opportunity analysis may rest on training data`);
+      else console.log(`[review] web searches: ${searchResult.searchCount}`);
+    } catch (searchErr) {
+      console.warn('Review web search pre-pass failed (non-fatal):', searchErr.message);
+    }
+
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略顧問。
+今天日期：${today}
 你的工作不是批評，是給出「馬上能執行」的解決方案。每個建議都要具體到看完就能動手。
 
 目前畫布上的影片企劃：
@@ -40,7 +99,7 @@ ${nodesText}
 
 連線關係：
 ${connsText}
-
+${webFacts ? '\n## 市場查證結果（web search，優先於訓練資料）\n' + webFacts + '\n' : ''}
 用繁體中文，以 JSON 回傳（不要 markdown code block）：
 {
   "overallScore": 1-10,

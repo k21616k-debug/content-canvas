@@ -3,6 +3,36 @@ import { addUsage } from './_usage.js';
 
 const anthropic = new Anthropic();
 
+async function runWithSearch(messages, model, maxTokens) {
+  const history = messages.map(m => ({ ...m }));
+  let totalIn = 0, totalOut = 0, searchCount = 0;
+  let accText = '';
+  for (let round = 0; round < 5; round++) {
+    const resp = await anthropic.messages.create({
+      model,
+      max_tokens: maxTokens,
+      tools: [{
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 3,
+        user_location: { type: 'approximate', country: 'TW', timezone: 'Asia/Taipei' },
+      }],
+      messages: history,
+    });
+    totalIn  += resp.usage?.input_tokens  ?? 0;
+    totalOut += resp.usage?.output_tokens ?? 0;
+    searchCount += resp.usage?.server_tool_use?.web_search_requests ?? 0;
+    const roundText = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    if (resp.stop_reason === 'pause_turn') {
+      accText += roundText;
+      history.push({ role: 'assistant', content: resp.content });
+      continue;
+    }
+    return { text: (accText + roundText).trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
+  }
+  return { text: accText.trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -19,7 +49,36 @@ export default async function handler(req, res) {
       ? `\n## 目前的計劃（需要根據新條件更新）\n${JSON.stringify(existingPlan.videos?.map(v => ({ id: v.id, topic: v.topic, stage: v.stage })), null, 2)}`
       : '';
 
+    const planSearchPrompt = `你是在幫台灣摩托車裝備 YouTube 頻道「摩托麻吉」做影片計劃前的市場調查。
+
+使用者提供的碎片：
+${fragmentText.substring(0, 400)}
+
+請使用 web search 查詢（優先查台灣市場）：
+1. 台灣 YouTube 上，這些主題現有哪些影片？觀點是什麼？哪些角度已被做過？
+2. 台灣騎士社群（PTT、FB、論壇）對這些主題最常見的問題或誤解
+3. 這些主題在台灣市場的知識空白——什麼角度還沒人做過？
+
+查完後，條列整理事實。沒查到的項目標記「未找到」，不要猜。`;
+
+    let webFacts = '';
+    try {
+      const searchResult = await runWithSearch(
+        [{ role: 'user', content: planSearchPrompt }],
+        'claude-haiku-4-5-20251001',
+        2000
+      );
+      addUsage('plan', searchResult.inputTokens, searchResult.outputTokens);
+      webFacts = searchResult.text;
+      if (!searchResult.searchCount) console.warn(`[plan] pre-pass ran 0 web searches — market insights may rest on training data`);
+      else console.log(`[plan] web searches: ${searchResult.searchCount}`);
+    } catch (searchErr) {
+      console.warn('Plan web search pre-pass failed (non-fatal):', searchErr.message);
+    }
+
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略師。
+今天日期：${today}
 
 你的任務：根據使用者給的碎片，推導出一個完整的影片計劃。
 
@@ -40,6 +99,7 @@ export default async function handler(req, res) {
 ## 使用者給的碎片
 ${fragmentText}
 ${existingContext}
+${webFacts ? '\n## 市場查證結果（web search，優先於訓練資料）\n' + webFacts : ''}
 
 ## 購買旅程框架
 - A 認知：讓陌生人知道這個產品或問題的存在

@@ -11,6 +11,7 @@ export default async function handler(req, res) {
   try {
     const { topic, job, cta, guest, interviewType, angles, research, user, mode } = req.body;
 
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
     let prompt;
 
     if (mode === 'interview') {
@@ -19,6 +20,7 @@ export default async function handler(req, res) {
         .join('\n');
 
       prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的訪談腳本企劃。
+今天日期：${today}
 請為以下訪談影片寫一份腳本大綱：
 
 訪談主題：${topic}
@@ -49,6 +51,7 @@ ${user ? `使用者補充：${user}` : ''}
         .join('\n');
 
       prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的腳本企劃。
+今天日期：${today}
 請為以下影片寫一份腳本大綱：
 
 主題：${topic}

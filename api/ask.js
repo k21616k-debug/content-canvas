@@ -34,7 +34,9 @@ export default async function handler(req, res) {
       ? `\n⚡ 使用者正在看的節點：「${context.focusNode.topic}」(id=${context.focusNode.id})`
       : '';
 
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略顧問。
+今天日期：${today}
 使用者正在用內容策略畫布規劃影片，向你提問。
 
 目前畫布上的節點：
