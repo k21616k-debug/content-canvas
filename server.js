@@ -9,6 +9,8 @@ import planHandler from './api/plan.js';
 import briefHandler from './api/brief.js';
 import classifyHandler from './api/classify.js';
 import scriptHandler from './api/script.js';
+import suggestColumnHandler from './api/suggest-column.js';
+import mergeHandler from './api/merge.js';
 import { getUsage } from './api/_usage.js';
 
 const GIT_HASH = (() => {
@@ -77,6 +79,7 @@ async function routeApi(handler, rawReq, rawRes) {
 }
 
 const server = createServer(async (req, res) => {
+  try {
   // Usage stats
   if (req.method === 'GET' && req.url === '/api/usage') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -118,6 +121,14 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/api/script') {
     await routeApi(scriptHandler, req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/suggest-column') {
+    await routeApi(suggestColumnHandler, req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/merge') {
+    await routeApi(mergeHandler, req, res);
     return;
   }
 
@@ -219,6 +230,12 @@ const server = createServer(async (req, res) => {
 
   res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
   createReadStream(filePath).pipe(res);
+  } catch (err) {
+    if (!res.writableEnded) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
 });
 
 server.listen(PORT, () => {

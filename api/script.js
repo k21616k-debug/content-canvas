@@ -1,9 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
 訪談類型：${interviewType || '深度專訪'}
 影片目的：${job || '未指定'}
 CTA：${cta || '留言分享你的想法'}
-${research?.positioning ? `來賓定位：${research.positioning}` : ''}
+${research?.insight ? `來賓定位：${research.insight}` : ''}
 ${research?.suggestedHook ? `Hook：${research.suggestedHook}` : ''}
 
 訪綱問題：
@@ -74,15 +75,10 @@ ${user ? `使用者補充：${user}` : ''}
 - 直接輸出純文字，不要 markdown 格式`;
     }
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { text: script, inputTokens, outputTokens } = await aiChat(prompt, { maxTokens: 2000 });
 
-    const script = msg.content[0].text.trim();
-    addUsage('script', msg.usage.input_tokens, msg.usage.output_tokens);
-    return res.status(200).json({ script });
+    addUsage('script', inputTokens, outputTokens);
+    return res.status(200).json({ script: script.trim() });
   } catch (err) {
     console.error('Script error:', err.message);
     return res.status(500).json({ error: err.message });

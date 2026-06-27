@@ -1,3 +1,16 @@
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = function (url, options) {
+    const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.endsWith('vercel.app'))
+      ? ''
+      : 'https://content-canvas-k21616k-debugs-projects.vercel.app';
+    if (typeof url === 'string' && url.startsWith('/api/')) {
+      url = API_BASE + url;
+    }
+    return originalFetch(url, options);
+  };
+})();
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 

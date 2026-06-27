@@ -5,7 +5,11 @@ import path from 'path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCREENSHOTS = path.join(__dirname, 'screenshots');
 const BASE = 'http://localhost:3456';
-const PASSWORD = '01530246';
+const PASSWORD = process.env.CANVAS_GATE_PASSWORD;
+if (!PASSWORD) {
+  console.error('Set CANVAS_GATE_PASSWORD env var before running (the content-canvas password-gate value).');
+  process.exit(1);
+}
 
 async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 let shotIdx = 0;

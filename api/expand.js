@@ -1,67 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat, aiChatWithSearch, cleanJson } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
-/**
- * Run a prompt with web_search_20250305 enabled.
- * Handles the tool_use loop: for Anthropic's built-in web search,
- * the model searches automatically and the loop continues until end_turn.
- * Returns { text, inputTokens, outputTokens }.
- */
-async function runWithSearch(messages, model, maxTokens) {
-  const history = messages.map(m => ({ ...m }));
-  let totalIn = 0, totalOut = 0, searchCount = 0;
-  let accText = '';
-
-  // round cap 5 (was 8): for Taiwan-gear vertical queries web_search saturates within
-  // 1-3 calls; rounds 4+ fetch marginal/duplicate results at full latency cost.
-  for (let round = 0; round < 5; round++) {
-    const resp = await anthropic.messages.create({
-      model,
-      max_tokens: maxTokens,
-      tools: [{
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 3,
-        user_location: { type: 'approximate', country: 'TW', timezone: 'Asia/Taipei' },
-      }],
-      messages: history,
-    });
-
-    totalIn  += resp.usage?.input_tokens  ?? 0;
-    totalOut += resp.usage?.output_tokens ?? 0;
-    // Instrumentation: count real web searches so a later speed change (fewer rounds /
-    // smaller model) can be PROVEN not to have starved grounding, not guessed from confidence.
-    searchCount += resp.usage?.server_tool_use?.web_search_requests ?? 0;
-
-    const roundText = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
-
-    // web_search_20250305 is server-side: Anthropic runs the search and embeds the
-    // results in resp.content. A long-running search pauses the turn with
-    // stop_reason 'pause_turn' — echo the assistant content back and continue the
-    // same turn, accumulating text across rounds so nothing emitted before the pause
-    // is lost. (Server-side tools need no client tool_result, so there is no
-    // tool_use branch to handle here.)
-    if (resp.stop_reason === 'pause_turn') {
-      accText += roundText;
-      history.push({ role: 'assistant', content: resp.content });
-      continue;
-    }
-
-    // end_turn (done) or any other terminal stop_reason: return what we collected.
-    return {
-      text: (accText + roundText).trim(),
-      inputTokens: totalIn,
-      outputTokens: totalOut,
-      searchCount,
-    };
-  }
-
-  return { text: accText.trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
-}
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -90,15 +33,9 @@ ${hookDirection ? `🔴 使用者的調整方向（最優先）：${hookDirectio
   ]
 }`;
 
-      const hooksMsg = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 400,
-        messages: [{ role: 'user', content: hooksPrompt }],
-      });
-      addUsage('expand', hooksMsg.usage.input_tokens, hooksMsg.usage.output_tokens);
-      const hooksText = hooksMsg.content[0].text.trim();
-      const hooksClean = hooksText.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
-      return res.status(200).json(JSON.parse(hooksClean));
+      const { text: hooksText, inputTokens: hooksIn, outputTokens: hooksOut } = await aiChat(hooksPrompt, { maxTokens: 1000 });
+      addUsage('expand', hooksIn, hooksOut);
+      return res.status(200).json(JSON.parse(cleanJson(hooksText)));
     }
 
     // ── Titles action ────────────────────────────────────────────────────────
@@ -132,15 +69,9 @@ ${angles ? `拍攝角度：${angles.map(a => a.title).join('、')}` : ''}
 - 第 3 組：權威型（數據、測試結果、專業觀點）
 每組標題要差異夠大，不要只是換詞。`;
 
-      const titlesMsg = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 800,
-        messages: [{ role: 'user', content: titlesPrompt }],
-      });
-      addUsage('expand', titlesMsg.usage.input_tokens, titlesMsg.usage.output_tokens);
-      const titlesText = titlesMsg.content[0].text.trim();
-      const titlesClean = titlesText.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
-      return res.status(200).json(JSON.parse(titlesClean));
+      const { text: titlesText, inputTokens: titlesIn, outputTokens: titlesOut } = await aiChat(titlesPrompt, { maxTokens: 800 });
+      addUsage('expand', titlesIn, titlesOut);
+      return res.status(200).json(JSON.parse(cleanJson(titlesText)));
     }
 
     // ── Diverge action: propose 3 deep, distinct extending video concepts ──────
@@ -183,23 +114,14 @@ ${existingTopics.length ? `\n畫布上已有的影片（含切入角度，用來
 
       let dresult;
       try {
-        const dv = await runWithSearch(
-          [{ role: 'user', content: divergePrompt }],
-          'claude-sonnet-4-6',
-          8000
-        );
+        const dv = await aiChatWithSearch(divergePrompt, { maxTokens: 8000 });
         addUsage('expand', dv.inputTokens, dv.outputTokens);
         if (!dv.searchCount) console.warn(`[diverge] ran 0 web searches for "${topic}" — candidates may rest on training data`);
         else console.log(`[diverge] web searches: ${dv.searchCount}`);
-        const dtext = dv.text;
-        const ds = dtext.indexOf('{'); const de = dtext.lastIndexOf('}');
-        const dclean = (ds >= 0 && de > ds) ? dtext.slice(ds, de + 1) : dtext;
-        dresult = JSON.parse(dclean);
+        dresult = JSON.parse(cleanJson(dv.text));
       } catch (dErr) {
-        // 429 = Anthropic rate limit (30k tok/min) — tell the user to wait instead of
-        // surfacing a bare 500. Any other failure (search down / unparseable JSON)
-        // degrades to an empty candidate list the frontend already handles.
-        if (dErr?.status === 429) {
+        // 429 rate limit — tell the user to wait
+        if (dErr?.status === 429 || dErr?.message?.includes('429')) {
           return res.status(429).json({ error: '查詢太密集，請等約一分鐘再發散一次' });
         }
         console.warn('Diverge failed:', dErr.message);
@@ -247,17 +169,11 @@ ${userNotes ? `相關筆記：${userNotes.substring(0, 400)}` : ''}
 
       let cresult;
       try {
-        const cm = await anthropic.messages.create({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 2000,
-          messages: [{ role: 'user', content: clipPrompt }],
-        });
-        addUsage('expand', cm.usage.input_tokens, cm.usage.output_tokens);
-        const ctext = cm.content.filter(b => b.type === 'text').map(b => b.text).join('');
-        const cs = ctext.indexOf('{'); const ce = ctext.lastIndexOf('}');
-        cresult = JSON.parse((cs >= 0 && ce > cs) ? ctext.slice(cs, ce + 1) : ctext);
+        const { text: ctext, inputTokens: clipIn, outputTokens: clipOut } = await aiChat(clipPrompt, { maxTokens: 2000 });
+        addUsage('expand', clipIn, clipOut);
+        cresult = JSON.parse(cleanJson(ctext));
       } catch (cErr) {
-        if (cErr?.status === 429) {
+        if (cErr?.status === 429 || cErr?.message?.includes('429')) {
           return res.status(429).json({ error: '查詢太密集，請等約一分鐘再切一次' });
         }
         console.warn('Clip failed:', cErr.message);
@@ -298,24 +214,37 @@ ${userNotes ? `使用者已知資訊：${userNotes.substring(0, 300)}` : '（使
 
     let webFacts = '';
     try {
-      const searchResult = await runWithSearch(
-        [{ role: 'user', content: searchPrompt }],
-        'claude-haiku-4-5-20251001',
-        2000
-      );
+      const searchResult = await aiChatWithSearch(searchPrompt, { maxTokens: 2000 });
       addUsage('expand', searchResult.inputTokens, searchResult.outputTokens);
       webFacts = searchResult.text;
-      // searchCount surfaces whether the pre-pass actually searched. 0 = insight will rest on
-      // training data, not verified facts (grounding starved) — logged so a speed tune can't hide it.
       if (!searchResult.searchCount) console.warn(`[expand] pre-pass ran 0 web searches for "${topic}" — grounding may rest on training data`);
       else console.log(`[expand] pre-pass web searches: ${searchResult.searchCount}`);
     } catch (searchErr) {
       console.warn('Web search pre-pass failed (non-fatal):', searchErr.message);
-      // Non-fatal: fall through to main expand without web facts
     }
 
     // ── Build main expand prompt ─────────────────────────────────────────────
     const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
+    const { previousResearch } = req.body;
+
+    // ── Cumulative delta context (when re-expanding after previous research) ─
+    let deltaContext = '';
+    if (previousResearch) {
+      const prevFields = [
+        previousResearch.insight ? `- 切入角度：${previousResearch.insight}` : '',
+        previousResearch.audienceCares ? `- 觀眾在意：${previousResearch.audienceCares}` : '',
+        previousResearch.searchKeywords ? `- 搜尋關鍵字：${previousResearch.searchKeywords}` : '',
+        previousResearch.suggestedHook ? `- Hook：${previousResearch.suggestedHook}` : '',
+        previousResearch.ctaSpoken ? `- CTA：${previousResearch.ctaSpoken}` : '',
+        previousResearch.ctaStrategy ? `- CTA 策略：${previousResearch.ctaStrategy}` : '',
+        previousResearch.confidence ? `- 信心度：${previousResearch.confidence}` : '',
+        previousResearch.aiNeeds ? `- AI 需要的資訊：${previousResearch.aiNeeds}` : '',
+        previousResearch.suggestedJob ? `- 建議 Job：${previousResearch.suggestedJob}` : '',
+        previousResearch.suggestedStage ? `- 建議階段：${previousResearch.suggestedStage}` : '',
+      ].filter(Boolean).join('\n');
+      deltaContext += `\n## 上一次的分析結果（已採納）\n\n以下是上一輪 AI 分析後使用者已採納的結論：\n${prevFields}\n\n🔴 重要：這些結論使用者已經看過並採納了。你的任務是「補充新發現」而非重複舊結論。\n- 不要重複上述已有的切入角度、觀眾痛點、或 Hook\n- 專注在：上次沒提到的面向、新查到的事實、更深入的延伸\n- 如果某個面向上次已經很完整，直接跳過，把篇幅留給新東西\n- angles 和 detailShots 也要避開上次已涵蓋的方向\n`;
+    }
+
     const prompt = `你是摩托車裝備 YouTube 頻道「摩托麻吉」的內容策略師。
 今天日期：${today}
 
@@ -339,7 +268,7 @@ ${job ? `影片目的（在觀眾心中的作用）：${job}` : ''}
 ${userNotes ? `🔴 使用者的已知方向（最優先）：\n「${userNotes}」\n\n每一個使用者提到的具體方向都必須出現在建議中。先採納，再補充他沒想到的。` : ''}
 ${webFacts ? `\n## 網路查詢結果（已驗證的公開資訊）\n${webFacts}\n\n這些是從網路查到的實際資料，優先級高於訓練資料中的印象，請據此修正任何不一致的地方。` : ''}
 ${existingContext}
-
+${deltaContext}
 ## 回傳格式
 
 JSON，不要加 markdown code block：
@@ -377,7 +306,8 @@ JSON，不要加 markdown code block：
       "cameraSetup": "拍攝建議"
     }
   ],
-  "ecosystemNotes": "和畫布上其他影片的關聯建議。沒有其他影片就給「這是第一支影片，建議之後規劃 [方向]」"
+  "ecosystemNotes": "和畫布上其他影片的關聯建議。沒有其他影片就給「這是第一支影片，建議之後規劃 [方向]」",
+  "suggestedTitle": "根據你的分析，建議一個更精準的影片工作標題。15字以內，要能一眼看出這支片的差異化角度，不要泛稱（例：不要『背包開箱』，要『防潑水 vs IPX6：兩種防水背包差在哪』）"
 }
 
 ## 規則
@@ -394,20 +324,10 @@ JSON，不要加 markdown code block：
 - detailShots：product 型給 4 個以上；concept 型可以不給；comparison 型（多品比較）每個品牌給 2-3 個
 - hooks 3 個風格差異要夠大，不能只是換詞，每個在 15 字以內`;
 
-    // CLAUDE.md 審查第1題（採集/推導分層）: the haiku pre-pass above is now the SINGLE
-    // web-search pass (採集 — slow, outward, once). The main sonnet call is pure 推導 —
-    // NO web_search tool — so the same video is never searched twice (kills the redundant
-    // ~60-90s second search). It reasons over the webFacts already fetched above.
-    const mainMsg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    addUsage('expand', mainMsg.usage.input_tokens, mainMsg.usage.output_tokens);
-    const text = mainMsg.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    const { text, inputTokens: mainIn, outputTokens: mainOut } = await aiChat(prompt, { maxTokens: 8000 });
+    addUsage('expand', mainIn, mainOut);
 
-    const s = text.indexOf('{'); const e = text.lastIndexOf('}');
-    const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
+    const clean = cleanJson(text);
     let result;
     try {
       result = JSON.parse(clean);

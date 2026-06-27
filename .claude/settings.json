@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"/Users/chunhuiliu/Moto-Claude Code/content-canvas\" && AI_CHANGED=$(git diff --name-only HEAD -- 'api/*.js' 'app-v2.js' 2>/dev/null) && if [ -n \"$AI_CHANGED\" ] && [ -z \"$(find ~/.claude/.cc-review-done -mmin -20 2>/dev/null)\" ]; then jq -nc --arg f \"$AI_CHANGED\" '{decision:\"block\",reason:(\"⛔ 改了 AI 邏輯，還沒對完整 diff 做重工/一致性複查：\\n\"+$f+\"\\n\\n對 git diff 跑完整審查、把報告給 Andrew 看過，touch ~/.claude/.cc-review-done 再停。push 等 Andrew 確認後才手動做。\")}'; elif [ -n \"$(git status --porcelain)\" ]; then git add -A && files=$(git diff --cached --name-only | head -4 | tr '\\n' ' ' | sed 's/ $//') && git commit -m \"wip: $files\" && rm -f ~/.claude/.cc-review-done && echo \"[已本機 commit，未 push] $files — 等 Andrew 確認後再 push 上 main\"; fi"
+            "command": "cd \"/Users/chunhuiliu/Andrewspot-AI-Core/專案/content-canvas\" && AI_CHANGED=$(git diff --name-only HEAD -- 'api/*.js' 'app-v2.js' 2>/dev/null) && if [ -n \"$AI_CHANGED\" ] && [ -z \"$(find ~/.claude/.cc-review-done -mmin -20 2>/dev/null)\" ]; then jq -nc --arg f \"$AI_CHANGED\" '{decision:\"block\",reason:(\"⛔ 改了 AI 邏輯，還沒對完整 diff 做重工/一致性複查：\\n\"+$f+\"\\n\\n對 git diff 跑完整審查、把報告給 Andrew 看過，touch ~/.claude/.cc-review-done 再停。push 等 Andrew 確認後才手動做。\")}'; elif [ -n \"$(git status --porcelain)\" ]; then git add -A && files=$(git diff --cached --name-only | head -4 | tr '\\n' ' ' | sed 's/ $//') && git commit -m \"wip: $files\" && rm -f ~/.claude/.cc-review-done && echo \"[已本機 commit，未 push] $files — 等 Andrew 確認後再 push 上 main\"; fi"
           }
         ]
       }

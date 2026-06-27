@@ -1,3 +1,16 @@
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = function (url, options) {
+    const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.endsWith('vercel.app'))
+      ? ''
+      : 'https://content-canvas-k21616k-debugs-projects.vercel.app';
+    if (typeof url === 'string' && url.startsWith('/api/')) {
+      url = API_BASE + url;
+    }
+    return originalFetch(url, options);
+  };
+})();
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -16,6 +29,15 @@ const STAGE_DEFAULT_JOB = { A: '吸引', B: '培育', C: '轉換', D: '轉換' }
 
 const STATUS_LABELS = { '': '未指定', planned: '規劃中', filming: '拍攝中', editing: '後製中', published: '已發布' };
 const STATUS_COLORS = { planned: '#94a3b8', filming: '#f59e0b', editing: '#3b82f6', published: '#22c55e' };
+
+// Trust Account (信任帳戶) — deposit/withdrawal framework
+const TRUST_LABELS = { '': '未指定', deposit: '存款', withdrawal: '提款', mixed: '混合' };
+const TRUST_DESC = { deposit: '展示判斷框架，建立信任', withdrawal: '直接推產品，導購', mixed: '框架為主但帶導購' };
+const TRUST_COLORS = { deposit: '#22c55e', withdrawal: '#f97316', mixed: '#3b82f6' };
+
+// Topic Phase (點>線>面)
+const PHASE_LABELS = { '': '未指定', point: '點', line: '線', plane: '面' };
+const PHASE_DESC = { point: '第一次碰，先驗證', line: '已驗證，展開短片', plane: '有信號，深度內容' };
 
 const MAX_UNDO = 50;
 
@@ -45,6 +67,9 @@ const state = {
   topicListOrder: [],
   // Show journey kanban lane background in topic free view
   showKanbanBg: false,
+  // Split project multi-select mode
+  splitMode: false,
+  splitSelected: new Set(),
 };
 
 // ── Project Management ──
@@ -105,6 +130,8 @@ async function switchProject(projectId) {
   state.topicMode = 'free';
   state.zoomLevel = 1;
   state.dismissedSuggestions = new Set();
+  state.splitMode = false;
+  state.splitSelected = new Set();
   // Load this project's data (awaited so callers that await switchProject see loaded state;
   // un-awaited callers still get a correct UI because loadProjectState calls render() itself).
   await loadProjectState();
@@ -134,6 +161,10 @@ async function loadProjectState() {
     for (const node of state.nodes.values()) {
       if (!node.aiResearch) node.aiResearch = null;
       if (!node.filmingAngles) node.filmingAngles = [];
+      // Migrate: trust account + topic phase (added 2026-06)
+      if (!node.main) node.main = {};
+      if (node.main.trustType === undefined) node.main.trustType = '';
+      if (node.topicPhase === undefined) node.topicPhase = '';
     }
   } catch { /* corrupt data */ }
   render();
@@ -253,6 +284,10 @@ async function loadState() {
       if (!node.positions.journey) node.positions.journey = { stage: '', order: 0 };
       if (!node.positions.material) node.positions.material = { column: 'long', order: 0 };
       if (!node.positions.topic) node.positions.topic = { x: 100, y: 100 };
+      // Migrate: trust account + topic phase (added 2026-06)
+      if (!node.main) node.main = {};
+      if (node.main.trustType === undefined) node.main.trustType = '';
+      if (node.topicPhase === undefined) node.topicPhase = '';
     }
     localStorage.setItem(STORAGE_KEY, raw);
   } catch { /* ignore corrupt data */ }
@@ -265,7 +300,7 @@ function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
   const id = 'n' + Date.now() + Math.random().toString(36).slice(2, 6);
   const node = {
     id,
-    main: { topic, job: job || '', jobSecondary: jobSecondary || '', cta: cta || '' },
+    main: { topic, job: job || '', jobSecondary: jobSecondary || '', cta: cta || '', trustType: '' },
     user: '',
     aiSuggest: [],
     aiResearch: null,
@@ -277,6 +312,8 @@ function createNode({ topic, job, jobSecondary, cta, isMain }, x, y) {
     targetAudience: '',
     ecosystemNotes: '',
     isMain: !!isMain,
+    topicPhase: '',
+    derivedFrom: null,
     status: '',
     positions: {
       topic: { x, y },
@@ -302,14 +339,16 @@ function updateNode(id, updates) {
   const node = state.nodes.get(id);
   if (!node) return;
   if (updates.main) {
-    // Ensure jobSecondary field exists
+    // Ensure optional fields exist (backward compat for old nodes)
     if (!node.main.jobSecondary) node.main.jobSecondary = '';
+    if (node.main.trustType === undefined) node.main.trustType = '';
     Object.assign(node.main, updates.main);
   }
   if (updates.user !== undefined) node.user = updates.user;
   if (updates.aiSuggest) node.aiSuggest = updates.aiSuggest;
   if (updates.isMain !== undefined) node.isMain = updates.isMain;
   if (updates.status !== undefined) node.status = updates.status;
+  if (updates.topicPhase !== undefined) node.topicPhase = updates.topicPhase;
   if (updates.positions) {
     for (const [view, pos] of Object.entries(updates.positions)) {
       Object.assign(node.positions[view], pos);
@@ -388,6 +427,7 @@ function renderHealthBar() {
   const jobCounts = { '吸引': 0, '培育': 0, '轉換': 0, '': 0 };
   const stageCounts = { A: 0, B: 0, C: 0, D: 0 };
   const materialCounts = { long: 0, short: 0 };
+  const trustCounts = { deposit: 0, withdrawal: 0, mixed: 0, '': 0 };
   let hasMain = false;
 
   for (const n of nodes) {
@@ -396,6 +436,7 @@ function renderHealthBar() {
     if (stage) stageCounts[stage] = (stageCounts[stage] || 0) + 1;
     const mat = n.positions?.material?.column || 'long';
     materialCounts[mat] = (materialCounts[mat] || 0) + 1;
+    trustCounts[n.main.trustType || ''] = (trustCounts[n.main.trustType || ''] || 0) + 1;
     if (n.isMain) hasMain = true;
   }
 
@@ -480,6 +521,21 @@ function renderHealthBar() {
     }
   }
 
+  // 6. Trust account balance check
+  const trustTagged = trustCounts.deposit + trustCounts.withdrawal + trustCounts.mixed;
+  if (trustTagged >= 2) {
+    const depositWeight = trustCounts.deposit + trustCounts.mixed * 0.5;
+    const withdrawalWeight = trustCounts.withdrawal + trustCounts.mixed * 0.5;
+    const totalWeight = depositWeight + withdrawalWeight;
+    const depositPct = totalWeight > 0 ? (depositWeight / totalWeight) * 100 : 100;
+    if (depositPct < 70) {
+      alerts.push({ type: 'warn', msg: `信任帳戶快透支 — 存款佔 ${Math.round(depositPct)}%，建議 ≥70%` });
+    }
+  }
+  if (trustCounts[''] > 0 && total >= 2) {
+    alerts.push({ type: 'info', msg: `${trustCounts['']} 支影片尚未標記信任類型（存款/提款）` });
+  }
+
   // Show max 3 most important alerts to avoid overwhelming
   const sortedAlerts = alerts.sort((a, b) => (a.type === 'warn' ? 0 : 1) - (b.type === 'warn' ? 0 : 1));
   const displayAlerts = sortedAlerts.slice(0, 3);
@@ -531,10 +587,18 @@ function renderHealthBar() {
         <div class="health-hidden-alerts">${hiddenAlerts.map(makeAlertSpan).join('')}</div>` : ''}${nextStep ? `<div class="health-nextstep">👉 你的下一步：${nextStep}</div>` : ''}</div>`
     : `<div class="health-alerts"><span class="health-alert health-alert-good">✅ 內容策略看起來不錯！</span></div>`;
 
+  // Trust account pills
+  const trustPills = ['deposit', 'withdrawal', 'mixed'].map(t => {
+    const count = trustCounts[t] || 0;
+    const color = TRUST_COLORS[t] || '#94a3b8';
+    return `<span class="health-pill" style="border-color:${color};color:${color}">${TRUST_LABELS[t]} ${count}</span>`;
+  }).join('');
+
   healthEl.innerHTML = `
     <div class="health-row">
       <div class="health-group"><span class="health-label">目的</span>${jobPills}</div>
       <div class="health-group"><span class="health-label">階段</span>${stagePills}</div>
+      <div class="health-group"><span class="health-label">信任</span>${trustPills}</div>
     </div>
     ${alertsHtml}
   `;
@@ -944,6 +1008,7 @@ function renderTopicListView(container) {
       </div>
       <div class="list-row-badges">
         ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span>` : ''}
+        ${node.main.trustType ? `<span class="job-badge" style="border-color:${TRUST_COLORS[node.main.trustType]};color:${TRUST_COLORS[node.main.trustType]};background:transparent">${esc(TRUST_LABELS[node.main.trustType])}</span>` : ''}
         ${stageLabel ? `<span class="cross-badge">${stageLabel}</span>` : ''}
         ${matLabel ? `<span class="cross-badge">${matLabel}</span>` : ''}
       </div>
@@ -1319,13 +1384,25 @@ function renderJourneyView(container) {
 
     const overLabel = diff > 10 ? ` <span class="over-quota-tag">過度集中</span>` : '';
 
+    const aiSuggestBtn = key !== 'D'
+      ? `<button class="ai-suggest-stage-btn" data-stage="${key}">🤖 AI 建議主題</button>`
+      : '';
+
     col.innerHTML = `
       <div class="column-header">${label}<div class="column-desc">${JOURNEY_DESC[key]}</div></div>
       <div class="health-bar"><div class="health-fill ${healthClass}" style="width:${Math.min(actual, 100)}%"></div></div>
       <div class="column-target">現有 ${actual}% ／目標 ${target}%${overLabel}</div>
       ${gapHtml}
+      ${aiSuggestBtn}
     `;
     col.dataset.columnKey = key;
+
+    col.querySelectorAll('.ai-suggest-stage-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        suggestStageVideos(key, btn);
+      });
+    });
 
     for (const node of nodes) {
       const matCol = node.positions.material?.column;
@@ -1335,27 +1412,7 @@ function renderJourneyView(container) {
       col.appendChild(el);
     }
 
-    // Render ghost nodes for this stage
-    const ghosts = state.ghostNodes.filter(g => g.type === 'new-node' && g.stage === key);
-    for (const ghost of ghosts) {
-      const gel = document.createElement('div');
-      gel.className = 'node-card compact ghost-node';
-      gel.innerHTML = `
-        <div class="ghost-label">🧩 AI 建議</div>
-        <div class="compact-row">
-          <span class="compact-topic">${esc(ghost.topic)}</span>
-          <span class="job-badge ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[ghost.job] || ''}">${esc(ghost.job)}</span>
-        </div>
-        <div class="ghost-reason">${esc(ghost.reason)}</div>
-        <div class="ghost-actions">
-          <button class="ai-action-btn adopt ghost-adopt-inline" data-ghost-id="${ghost.id}">採用</button>
-          <button class="ai-action-btn dismiss ghost-dismiss-inline" data-ghost-id="${ghost.id}">跳過</button>
-        </div>
-      `;
-      gel.querySelector('.ghost-adopt-inline').addEventListener('click', (e) => { e.stopPropagation(); adoptGhost(ghost.id); });
-      gel.querySelector('.ghost-dismiss-inline').addEventListener('click', (e) => { e.stopPropagation(); dismissGhost(ghost.id); });
-      col.appendChild(gel);
-    }
+
 
     const addBtn = document.createElement('button');
     addBtn.className = 'column-add-btn';
@@ -1397,6 +1454,7 @@ function buildNodeCard(node, opts = {}) {
         ${node.isMain ? '<span class="main-badge-sm">★</span>' : ''}
         <span class="compact-topic">${esc(node.main.topic)}</span>
         ${node.main.job ? `<span class="job-badge ${jobClass}" title="${JOB_DESC[node.main.job] || ''}">${esc(node.main.job)}</span>` : ''}
+        ${node.main.trustType ? `<span class="job-badge" style="border-color:${TRUST_COLORS[node.main.trustType]};color:${TRUST_COLORS[node.main.trustType]};background:transparent" title="${TRUST_DESC[node.main.trustType] || ''}">${esc(TRUST_LABELS[node.main.trustType])}</span>` : ''}
       </div>
       ${node.user ? `<div class="compact-user">${esc(node.user)}</div>` : ''}
       ${sourceHtml}
@@ -1425,8 +1483,11 @@ function buildNodeCard(node, opts = {}) {
         ${!node.user && !node.aiResearch ? '<span class="knowledge-thin-badge" title="尚無產品知識——先填「產品／內容知識」欄再擴寫，AI 品質更好">📦?</span>' : ''}
       </div>
       <div class="node-topic" title="${esc(node.main.topic)}">${esc(node.main.topic)}</div>
+      ${node.suggestedTitle && node.suggestedTitle !== node.main.topic ? `<span class="suggested-title-badge" data-node-id="${node.id}" title="點擊採用此標題">建議：${esc(node.suggestedTitle)}</span>` : ''}
+      <span class="status-badge ${node.status ? 'status-badge-' + node.status : 'status-badge-empty'}" data-node-id="${node.id}" title="點擊切換狀態">${node.status ? esc(STATUS_LABELS[node.status]) : '＋狀態'}</span>
       <div class="node-meta">
         ${node.main.job ? `<span class="job-badge ${jobClass}">${esc(node.main.job)}</span>` : '<span class="job-badge job-unset">未指定</span>'}
+        ${node.main.trustType ? `<span class="job-badge" style="border-color:${TRUST_COLORS[node.main.trustType]};color:${TRUST_COLORS[node.main.trustType]};background:transparent">${esc(TRUST_LABELS[node.main.trustType])}</span>` : ''}
         ${node.main.jobSecondary ? `<span class="job-badge-secondary ${{'吸引':'job-attract','培育':'job-nurture','轉換':'job-convert'}[node.main.jobSecondary] || ''}">${esc(node.main.jobSecondary)}</span>` : ''}
         ${node.main.cta ? `<span class="cta-text">CTA: ${esc(node.main.cta)}</span>` : ''}
       </div>
@@ -1468,6 +1529,28 @@ function buildNodeCard(node, opts = {}) {
         render();
       }
     });
+  });
+
+  // Suggested title badge click → adopt title
+  el.querySelector('.suggested-title-badge')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pushUndo();
+    node.main.topic = node.suggestedTitle;
+    node.suggestedTitle = '';
+    saveState();
+    render();
+    showToast('標題已更新');
+  });
+
+  // Status badge click → cycle through statuses
+  el.querySelector('.status-badge')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const cycle = ['', 'planned', 'filming', 'editing', 'published'];
+    const cur = node.status || '';
+    const next = cycle[(cycle.indexOf(cur) + 1) % cycle.length];
+    node.status = next;
+    saveState();
+    render();
   });
 
   const userEl = el.querySelector('.node-user-text');
@@ -1719,30 +1802,10 @@ function renderPanel() {
       </div>
 
       <div class="detail-section">
-        <label>購買階段 <span class="field-hint-inline">— 觀眾看這支影片時在哪個步驟？</span></label>
-        <select id="edit-stage">${stageOptions}</select>
-        ${(() => {
-          const stage = node.positions?.journey?.stage;
-          if (!stage) return `<div class="inline-node-hint inline-node-hint-info">💡 設定階段後，影片會出現在購買旅程對應欄位</div>`;
-          const stageNodes = [...state.nodes.values()].filter(n => n.positions?.journey?.stage === stage);
-          const label = JOURNEY_LABELS[stage];
-          if (stageNodes.length >= 3) return `<div class="inline-node-hint inline-node-hint-info">💡 「${label}」已有 ${stageNodes.length} 支影片，考慮補其他階段</div>`;
-          return '';
-        })()}
-      </div>
-
-      <div class="detail-section">
         <label>CTA <span class="field-hint-inline">— 影片結尾叫觀眾做的事（留言、點連結、追蹤…）</span></label>
         <input type="text" id="edit-cta" value="${esc(node.main.cta)}" placeholder="例：留言 1 2 3 告訴我、連結在資訊欄">
         ${!node.main.cta ? `<div class="inline-node-hint inline-node-hint-warn">💬 沒有 CTA 觀眾看完不知道下一步要做什麼，例如「留言告訴我你的想法」</div>` : ''}
       </div>
-
-      <div class="detail-section">
-        <label>主要用途</label>
-        <select id="edit-job">${jobOptions}</select>
-      </div>
-
-      <div class="detail-divider"></div>
 
       <div class="detail-section">
         <div class="field-label-row">
@@ -1759,12 +1822,42 @@ function renderPanel() {
         <div class="advanced-body">
           <div class="detail-row">
             <div class="detail-half">
+              <label>主要用途</label>
+              <select id="edit-job">${jobOptions}</select>
+            </div>
+            <div class="detail-half">
+              <label>購買階段</label>
+              <select id="edit-stage">${stageOptions}</select>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-half">
               <label>次要用途</label>
               <select id="edit-job-secondary">${jobSecondaryOptions}</select>
             </div>
             <div class="detail-half">
               <label>素材</label>
               <select id="edit-material">${matOptions}</select>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-half">
+              <label>信任類型</label>
+              <select id="edit-trust-type">
+                ${Object.entries(TRUST_LABELS).map(([k, v]) => {
+                  const desc = TRUST_DESC[k] ? ` — ${TRUST_DESC[k]}` : '';
+                  return `<option value="${k}" ${(node.main.trustType || '') === k ? 'selected' : ''}>${v}${desc}</option>`;
+                }).join('')}
+              </select>
+            </div>
+            <div class="detail-half">
+              <label>主題階段</label>
+              <select id="edit-topic-phase">
+                ${Object.entries(PHASE_LABELS).map(([k, v]) => {
+                  const desc = PHASE_DESC[k] ? ` — ${PHASE_DESC[k]}` : '';
+                  return `<option value="${k}" ${(node.topicPhase || '') === k ? 'selected' : ''}>${v}${desc}</option>`;
+                }).join('')}
+              </select>
             </div>
           </div>
           <div class="detail-row">
@@ -1783,6 +1876,17 @@ function renderPanel() {
               </label>
             </div>
           </div>
+          <div class="detail-section" style="margin-top:8px">
+            <label>連線</label>
+            <div id="conn-list"></div>
+            <div class="conn-add-row">
+              <select id="conn-target"><option value="">連線到...</option></select>
+              <button id="btn-add-conn" class="conn-add-btn">＋</button>
+            </div>
+          </div>
+          <button class="merge-btn" id="btn-merge" title="把其他節點合併進來" style="margin-top:8px;width:100%">🔀 收攏其他節點</button>
+          <button class="expand-btn" id="btn-titles" style="margin-top:6px;width:100%">🎬 YouTube 標題建議</button>
+          <div id="titles-result"></div>
         </div>
       </details>
 
@@ -1867,6 +1971,14 @@ function renderPanel() {
       </details>
       ` : '')}
 
+      <div class="detail-divider"></div>
+      <div class="hook-manual-block">
+        <label class="hook-manual-label">✏️ Hook（可直接編輯）</label>
+        <input type="text" id="hook-manual-input" class="hook-manual-input"
+          placeholder="輸入你的 Hook，例：防水包不是最好的騎士背包"
+          value="${esc(node.aiResearch?.suggestedHook || '')}">
+      </div>
+
       ${angles.length > 0 ? (() => {
         const confirmedCount = angles.filter(a => a.confirmed !== false).length;
         const summaryLabel = confirmedCount > 0
@@ -1930,21 +2042,9 @@ function renderPanel() {
           ${node.main.cta === research.ctaSpoken ? `<div class="field-hint-inline" style="margin-top:4px;color:#059669">✓ 已套用為 CTA</div>` : ''}
         </div>` : ''}
         <button class="adopt-all-btn" id="btn-adopt-research">✅ 採納研究結果（CTA + 洞察一次到位）</button>
-        <button class="expand-btn" id="btn-titles" style="margin-top:6px">🎬 YouTube 標題建議</button>
-        <div id="titles-result"></div>
       </div>
       ` : ''}
 
-      <div class="detail-divider"></div>
-
-      <div class="detail-section">
-        <label>連線</label>
-        <div id="conn-list"></div>
-        <div class="conn-add-row">
-          <select id="conn-target"><option value="">連線到...</option></select>
-          <button id="btn-add-conn" class="conn-add-btn">＋</button>
-        </div>
-      </div>
       ${node.aiSuggest.length > 0 ? `
         <div class="detail-section">
           <label>結構建議</label>
@@ -1952,21 +2052,12 @@ function renderPanel() {
         </div>
       ` : ''}
       <div class="detail-divider"></div>
-      <div class="ask-section">
-        <label>💬 針對這個節點提問</label>
-        <div class="ask-input-row">
-          <input type="text" id="ask-node-input" class="ask-input" placeholder="例：這個主題的 CTA 怎麼寫比較好？">
-          <button id="ask-node-btn" class="ask-send-btn">送出</button>
-        </div>
-        <div id="ask-node-result"></div>
-      </div>
       <div class="detail-actions">
         <span class="autosave-indicator" id="autosave-indicator"></span>
       </div>
       <div class="detail-node-actions">
         <button class="diverge-btn" id="btn-diverge" title="從這支影片深度發散 3 個延伸影片">🌿 發散</button>
         ${node.positions?.material?.column !== 'short' ? `<button class="diverge-btn" id="btn-cut-shorts" title="把這支長片切成幾支短片入口（有拍攝角度就挑、沒有 AI 幫你想）">✂ 切短片</button>` : ''}
-        <button class="merge-btn" id="btn-merge" title="把其他節點合併進來">🔀 收攏</button>
       </div>
       <div class="detail-danger-zone">
         <button class="duplicate-btn" id="btn-duplicate-node">📋 複製節點</button>
@@ -1983,6 +2074,7 @@ function renderPanel() {
           job: $('#edit-job').value,
           jobSecondary: jobSecEl ? jobSecEl.value : '',
           cta: $('#edit-cta').value,
+          trustType: $('#edit-trust-type')?.value || '',
         },
         user: $('#edit-user').value,
         isMain: $('#edit-main').checked,
@@ -1992,6 +2084,9 @@ function renderPanel() {
           material: { column: $('#edit-material').value },
         },
       };
+      // Save topicPhase directly (not nested in main)
+      const phaseVal = $('#edit-topic-phase')?.value || '';
+      if (node) node.topicPhase = phaseVal;
       updateNode(node.id, updates);
       // Show saved indicator
       const indicator = $('#autosave-indicator');
@@ -2010,7 +2105,7 @@ function renderPanel() {
       const el = $(sel);
       if (el) el.addEventListener('blur', autoSaveNode);
     });
-    ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main', '#edit-status'].forEach(sel => {
+    ['#edit-job', '#edit-job-secondary', '#edit-stage', '#edit-material', '#edit-main', '#edit-status', '#edit-trust-type', '#edit-topic-phase'].forEach(sel => {
       const el = $(sel);
       if (el) el.addEventListener('change', autoSaveNode);
     });
@@ -2042,6 +2137,8 @@ function renderPanel() {
       }
       if (node.aiResearch) newNode.aiResearch = JSON.parse(JSON.stringify(node.aiResearch));
       if (node.filmingAngles?.length) newNode.filmingAngles = JSON.parse(JSON.stringify(node.filmingAngles));
+      if (node.main.trustType) newNode.main.trustType = node.main.trustType;
+      if (node.topicPhase) newNode.topicPhase = node.topicPhase;
       saveState();
       selectNode(newNode.id);
       render();
@@ -2127,7 +2224,7 @@ function renderPanel() {
       btn.disabled = true;
 
       try {
-        const result = await expandContent(topic, userText, node.main.job, node.positions.journey?.stage || '');
+        const result = await expandContent(topic, userText, node.main.job, node.positions.journey?.stage || '', node.aiResearch || null);
         if (result) {
           node.aiResearch = result.research;
           node.filmingAngles = (result.angles || []).map(a => ({ ...a, confirmed: false }));
@@ -2137,6 +2234,7 @@ function renderPanel() {
           node.aiReceivedSummary = result.aiReceivedSummary || '';
           node.targetAudience = result.targetAudience || '';
           node.ecosystemNotes = result.ecosystemNotes || '';
+          node.suggestedTitle = result.suggestedTitle || '';
           saveState();
           renderPanel();
           showToast('✅ AI 擴寫完成 — 選一個 Hook，確認拍攝角度');
@@ -2151,6 +2249,13 @@ function renderPanel() {
         btn.textContent = '❌ 查詢失敗，再試一次';
         btn.disabled = false;
       }
+    });
+
+    // Hook manual edit — user can type/paste hook directly
+    $('#hook-manual-input')?.addEventListener('input', (e) => {
+      if (!node.aiResearch) node.aiResearch = {};
+      node.aiResearch.suggestedHook = e.target.value;
+      saveState();
     });
 
     // Hook selection — sets aiResearch.suggestedHook which feeds into Brief
@@ -2582,7 +2687,7 @@ function mockScript(node) {
   return lines.join('\n');
 }
 
-async function expandContent(topic, userNotes, job, stage = '') {
+async function expandContent(topic, userNotes, job, stage = '', previousResearch = null) {
   // Collect existing node topics for ecosystem awareness
   const existingNodes = [...state.nodes.values()]
     .filter(n => n.main.topic !== topic) // exclude self
@@ -2593,7 +2698,7 @@ async function expandContent(topic, userNotes, job, stage = '') {
     const res = await fetch('/api/expand', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, userNotes, job, stage, existingNodes }),
+      body: JSON.stringify({ topic, userNotes, job, stage, existingNodes, previousResearch: previousResearch || undefined }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -3034,6 +3139,27 @@ async function runGlobalReview() {
   render();
   showReviewPanel(suggestions, null);
 
+  // Staged progress timer — self-clears when elements disappear (panel replaced by results)
+  const _rvT0 = Date.now();
+  const _rvStages = [
+    [0,  '🔍 正在搜尋台灣市場資料…'],
+    [20, '📺 分析競品影片分布中…'],
+    [45, '🧠 AI 評估缺口優先順序…'],
+    [65, '📝 整理三項具體建議…'],
+  ];
+  clearInterval(window._rvTick);
+  window._rvTick = setInterval(() => {
+    const fill = $('#review-progress-fill');
+    const msg  = $('#review-load-msg');
+    const sub  = $('#review-load-sub');
+    if (!fill) { clearInterval(window._rvTick); return; }
+    const sec = Math.round((Date.now() - _rvT0) / 1000);
+    const stage = [..._rvStages].reverse().find(([t]) => sec >= t) || _rvStages[0];
+    fill.style.width = Math.min(5 + (sec / 90) * 88, 93) + '%';
+    if (msg) msg.textContent = stage[1];
+    if (sub) sub.textContent = `已等待 ${sec} 秒`;
+  }, 1000);
+
   // Try AI review in parallel
   try {
     const nodes = [...state.nodes.values()].map(n => ({
@@ -3059,10 +3185,12 @@ async function runGlobalReview() {
     if (res.ok) {
       const aiReview = await res.json();
       state.lastAiReview = aiReview; // Cache for adopt/dismiss
+      clearInterval(window._rvTick);
+      const fill = $('#review-progress-fill');
+      if (fill) { fill.style.width = '100%'; await new Promise(r => setTimeout(r, 350)); }
       showReviewPanel(suggestions, aiReview);
       refreshVersionBadge();
-      const issueCount = Array.isArray(aiReview) ? aiReview.length : 0;
-      showToast(issueCount > 0 ? `🧩 AI 找到 ${issueCount} 個策略問題` : '✅ 策略看起來很完整');
+      showToast('🧩 AI 缺口分析完成');
     } else {
       // API returned error — remove loading indicator
       const el = document.querySelector('.ai-review-loading');
@@ -3088,7 +3216,7 @@ function showReviewPanel(suggestions, aiReview) {
   review.classList.remove('hidden');
   state.selectedNodeId = null;
 
-  if (suggestions.length === 0 && (!aiReview || (!aiReview.issues?.length && !aiReview.quickWins?.length))) {
+  if (suggestions.length === 0 && (!aiReview || !aiReview.actions?.length)) {
     const hasSkipped = state.dismissedSuggestions.size > 0;
     $('#review-content').innerHTML = `
       <div class="review-perfect">
@@ -3107,99 +3235,58 @@ function showReviewPanel(suggestions, aiReview) {
 
   let html = '';
 
-  // AI-powered review section
-  if (aiReview) {
-    const _rNodes = [...state.nodes.values()]; // snapshot for stable ID lookup
+  // AI-powered review section — 3 actions: merge | gap | ready
+  if (aiReview && Array.isArray(aiReview.actions)) {
+    const _rNodes = [...state.nodes.values()];
     const _rTime = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
-    const scoreColor = aiReview.overallScore >= 7 ? '#22c55e' : aiReview.overallScore >= 4 ? '#f59e0b' : '#ef4444';
-    html += `<div class="ai-review-header">
-      <div class="ai-review-score" style="border-color:${scoreColor};color:${scoreColor}">${aiReview.overallScore}/10</div>
-      <div class="ai-review-summary">${esc(aiReview.summary || '')}</div>
-      <div style="font-size:11px;color:#94a3b8;margin-top:4px;display:flex;align-items:center;gap:8px">
-        <span>分析時間：${_rTime}</span>
-        <button id="btn-review-refresh" style="font-size:11px;padding:2px 8px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#64748b;cursor:pointer">重新分析</button>
-      </div>
+    html += `<div style="font-size:11px;color:#94a3b8;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+      <span>🤖 AI 缺口分析　${_rTime}</span>
+      <button id="btn-review-refresh" style="font-size:11px;padding:2px 8px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;color:#64748b;cursor:pointer">重新分析</button>
     </div>`;
-    if (aiReview.quickWins && aiReview.quickWins.length > 0) {
-      html += `<div class="review-section-title">⚡ 馬上可以做</div>`;
-      for (const qw of aiReview.quickWins) {
-        html += `
-          <div class="review-card review-card-quickwin">
-            <div class="review-card-topic">✅ ${esc(qw.action)}</div>
-            <div class="review-card-reason">${esc(qw.why)}</div>
-            <div class="review-card-actions">
-              ${qw.targetNodeIndex ? `<button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${qw.targetNodeIndex}" data-node-id="${_rNodes[qw.targetNodeIndex - 1]?.id || ''}">→ 前往節點</button>` : ''}
-              <button class="ai-action-btn discuss qw-discuss-btn" data-context="${esc(qw.action)}">💬 討論</button>
-            </div>
+    const actionEmoji = { merge: '🔀', gap: '🕳️', ready: '🎬' };
+    for (const action of aiReview.actions) {
+      const emoji = actionEmoji[action.type] || '📌';
+      let actionHtml = '';
+      if (action.type === 'merge' && action.nodeA && action.nodeB && action.mergedTopic) {
+        const keepNode = _rNodes[action.nodeA - 1];
+        const dropNode = _rNodes[action.nodeB - 1];
+        actionHtml = `
+          <div class="review-card-newnode">
+            <span class="review-newnode-label">合併後標題：「${esc(action.mergedTopic)}」</span>
+            <button class="ai-action-btn adopt review-merge-btn"
+              data-keep="${action.nodeA}" data-drop="${action.nodeB}"
+              data-keep-id="${keepNode?.id || ''}" data-drop-id="${dropNode?.id || ''}"
+              data-topic="${esc(action.mergedTopic)}">合併節點</button>
           </div>`;
-      }
-    }
-    if (aiReview.issues && aiReview.issues.length > 0) {
-      html += `<div class="review-section-title">🤖 AI 策略分析</div>`;
-      const renderAiIssueCard = (issue) => {
-        const sevClass = issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-medium' : 'sev-low';
-        const typeEmoji = { duplicate: '🔁', merge: '🔀', remove: '🗑️', gap: '🕳️', quality: '💡', conflict: '⚡', opportunity: '🎯' }[issue.type] || '📌';
-        const newNodeHtml = issue.newNode ? `
-            <div class="review-card-newnode">
-              <span class="review-newnode-label">💡 建議新增：「${esc(issue.newNode.topic)}」</span>
-              <span class="review-newnode-meta">${esc(issue.newNode.job)} · ${esc(issue.newNode.reason)}</span>
-              <button class="ai-action-btn adopt review-create-node" data-topic="${esc(issue.newNode.topic)}" data-job="${esc(issue.newNode.job)}" data-stage="${esc(issue.newNode.stage)}">一鍵建立</button>
-            </div>` : '';
-        const _mergeKeepNode = _rNodes[(issue.targetNodeIndex || 1) - 1];
-        const _mergeDropNode = _rNodes[(issue.mergeWith || 1) - 1];
-        const mergeHtml = (issue.type === 'merge' && issue.targetNodeIndex && issue.mergeWith) ? `
-            <div class="review-card-newnode">
-              <span class="review-newnode-label">🔀 合併後標題：「${esc(issue.mergedTopic || '')}」</span>
-              <span class="review-newnode-meta" style="font-size:11px;color:#94a3b8">刪除「${esc(_mergeDropNode?.main?.topic || '')}」，保留「${esc(_mergeKeepNode?.main?.topic || '')}」</span>
-              <button class="ai-action-btn adopt review-merge-btn"
-                data-keep="${issue.targetNodeIndex}" data-drop="${issue.mergeWith}"
-                data-keep-id="${_mergeKeepNode?.id || ''}" data-drop-id="${_mergeDropNode?.id || ''}"
-                data-topic="${esc(issue.mergedTopic || '')}">合併節點</button>
-            </div>` : '';
-        const _removeNode = _rNodes[(issue.targetNodeIndex || 1) - 1];
-        const removeHtml = (issue.type === 'remove' && issue.targetNodeIndex) ? `
-            <div class="review-card-newnode">
-              <span class="review-newnode-meta" style="font-size:11px;color:#94a3b8">移除節點：「${esc(_removeNode?.main?.topic || '')}」</span>
-              <button class="ai-action-btn dismiss review-remove-btn" data-idx="${issue.targetNodeIndex}" data-remove-id="${_removeNode?.id || ''}">移除節點</button>
-            </div>` : '';
-        return `
-          <div class="review-card review-card-ai ${sevClass}">
-            <div class="review-card-topic">${typeEmoji} ${esc(issue.title)}</div>
-            <div class="review-card-reason">${esc(issue.detail)}</div>
-            <div class="review-card-suggestion">💡 ${esc(issue.suggestion)}</div>
-            ${newNodeHtml}${mergeHtml}${removeHtml}
-            <div class="review-card-actions">
-              <button class="ai-action-btn discuss review-discuss-btn" data-context="${esc(issue.title + '：' + issue.suggestion)}">💬 討論</button>
-            </div>
+      } else if (action.type === 'gap' && action.suggestedTopic) {
+        actionHtml = `
+          <div class="review-card-newnode">
+            <span class="review-newnode-label">💡 建議新增：「${esc(action.suggestedTopic)}」</span>
+            <button class="ai-action-btn adopt review-create-node" data-topic="${esc(action.suggestedTopic)}" data-job="" data-stage="">一鍵建立</button>
           </div>`;
-      };
-      const MAX_AI_ISSUES = 5;
-      aiReview.issues.slice(0, MAX_AI_ISSUES).forEach(issue => { html += renderAiIssueCard(issue); });
-      if (aiReview.issues.length > MAX_AI_ISSUES) {
-        const extra = aiReview.issues.length - MAX_AI_ISSUES;
-        html += `<button class="review-low-toggle" data-expanded="false">＋ 顯示剩餘 ${extra} 個建議 ▾</button>`;
-        html += `<div class="review-ai-extra" style="display:none">`;
-        aiReview.issues.slice(MAX_AI_ISSUES).forEach(issue => { html += renderAiIssueCard(issue); });
-        html += `</div>`;
+      } else if (action.type === 'ready' && action.nodeIndex) {
+        const readyNode = _rNodes[action.nodeIndex - 1];
+        if (readyNode) {
+          actionHtml = `
+            <div class="review-card-newnode">
+              <button class="ai-action-btn adopt qw-goto-btn" data-node-idx="${action.nodeIndex}" data-node-id="${readyNode.id}">→ 前往節點</button>
+            </div>`;
+        }
       }
-    }
-    if (aiReview.publishOrder) {
       html += `
-        <div class="review-card review-card-ai sev-low">
-          <div class="review-card-topic">📅 建議發布順序</div>
-          <div class="review-card-reason">${esc(aiReview.publishOrder)}</div>
-        </div>`;
-    }
-    if (aiReview.strategyMap) {
-      html += `
-        <div class="review-card review-card-strategy">
-          <div class="review-card-topic">🗺️ 接下來怎麼做</div>
-          <div class="review-card-reason">${esc(aiReview.strategyMap)}</div>
+        <div class="review-card review-card-ai sev-medium">
+          <div class="review-card-topic">${emoji} ${esc(action.title)}</div>
+          <div class="review-card-reason">${esc(action.detail || '')}</div>
+          ${actionHtml}
         </div>`;
     }
     html += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">`;
   } else if (suggestions.length > 0) {
-    html += `<div class="ai-review-loading">🤖 AI 策略分析載入中...</div>`;
+    html += `<div class="review-progress-wrap">
+      <div class="review-progress-rail"><div class="review-progress-fill" id="review-progress-fill" style="width:5%"></div></div>
+      <div id="review-load-msg" class="review-load-msg">🔍 正在搜尋台灣市場資料…</div>
+      <div id="review-load-sub" class="review-load-sub">通常需要 30–60 秒</div>
+    </div>`;
   }
 
   if (suggestions.length > 0) html += `<div class="review-summary">找到 ${suggestions.length} 個結構建議</div>`;
@@ -3299,18 +3386,6 @@ function showReviewPanel(suggestions, aiReview) {
         ${lowSugs.map(s => s.type === 'auto-fill' ? renderFillCard(s) : renderUpdateCard(s)).join('')}
       </div>`;
   }
-
-  html += `
-    <div class="detail-divider"></div>
-    <div class="ask-section">
-      <label>💬 向 AI 提問（全域）</label>
-      <div class="ask-input-row">
-        <textarea id="ask-global-input" class="ask-input" placeholder="例：目前策略有什麼盲點？" rows="3"></textarea>
-        <button id="ask-global-btn" class="ask-send-btn">送出</button>
-      </div>
-      <div class="ask-hint">⌘↵ 送出　Enter 換行</div>
-      <div id="ask-global-result"></div>
-    </div>`;
 
   $('#review-content').innerHTML = html;
 
@@ -3588,6 +3663,8 @@ function exportAllBriefs() {
   for (const node of nodes) {
     text += `## ${node.main.topic}\n`;
     text += `影片目的：${node.main.job || '未指定'}\n`;
+    if (node.main.trustType) text += `信任類型：${TRUST_LABELS[node.main.trustType]}\n`;
+    if (node.topicPhase) text += `主題階段：${PHASE_LABELS[node.topicPhase]}\n`;
     const stg = node.positions?.journey?.stage;
     text += `階段：${stg ? JOURNEY_LABELS[stg] : '未分配'}\n`;
     text += `素材：${MATERIAL_LABELS[node.positions?.material?.column || 'long']}\n`;
@@ -4813,6 +4890,14 @@ function bindEvents() {
   });
 
   $('#btn-export').addEventListener('click', exportAllBriefs);
+
+  // Split Project button
+  $('#btn-split')?.addEventListener('click', () => {
+    if (state.splitMode) { exitSplitMode(); return; }
+    if (state.nodes.size < 2) { showToast('至少需要 2 個節點才能拆分'); return; }
+    enterSplitMode();
+  });
+
   $('#btn-review').addEventListener('click', () => {
     // If cached AI review exists, restore it immediately without API call
     if (state.lastAiReview) {
@@ -4830,6 +4915,14 @@ function bindEvents() {
   $('#btn-help')?.addEventListener('click', () => {
     const helpEl = document.getElementById('shortcut-overlay');
     if (helpEl) helpEl.classList.toggle('hidden');
+  });
+
+  $('#btn-more-tools')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.getElementById('more-tools-menu')?.classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => {
+    document.getElementById('more-tools-menu')?.classList.add('hidden');
   });
 
   $('#review-close').addEventListener('click', () => {
@@ -4872,6 +4965,8 @@ function bindEvents() {
       return;
     }
     if (e.key === 'Escape') {
+      // Exit split mode first
+      if (state.splitMode) { exitSplitMode(); return; }
       const helpEl = document.getElementById('shortcut-overlay');
       if (helpEl && !helpEl.classList.contains('hidden')) {
         helpEl.classList.add('hidden');
@@ -5058,6 +5153,450 @@ function showProjectNameModal(title, defaultValue, onConfirm) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
 
+// ── Split Project ──
+
+function enterSplitMode() {
+  state.splitMode = true;
+  state.splitSelected = new Set();
+  renderSplitUI();
+}
+
+function exitSplitMode() {
+  state.splitMode = false;
+  state.splitSelected = new Set();
+  // Remove checkboxes from cards
+  document.querySelectorAll('.split-checkbox').forEach(el => el.remove());
+  // Remove floating bar
+  const bar = document.getElementById('split-action-bar');
+  if (bar) bar.remove();
+  render();
+}
+
+function renderSplitUI() {
+  // Add checkboxes to all node cards
+  render();
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.node-card').forEach(card => {
+      const nodeId = card.dataset.nodeId;
+      if (!nodeId) return;
+      // Skip if already has checkbox
+      if (card.querySelector('.split-checkbox')) return;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'split-checkbox';
+      cb.checked = state.splitSelected.has(nodeId);
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (cb.checked) state.splitSelected.add(nodeId);
+        else state.splitSelected.delete(nodeId);
+        updateSplitBar();
+      });
+      card.prepend(cb);
+    });
+    updateSplitBar();
+  });
+}
+
+function updateSplitBar() {
+  let bar = document.getElementById('split-action-bar');
+  const count = state.splitSelected.size;
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'split-action-bar';
+    bar.className = 'split-action-bar';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `
+    <span class="split-bar-text" style="color: #94a3b8; font-size: 13px; margin-right: 8px">已選取 ${count} 個影片：</span>
+    <button class="split-confirm-btn" ${count === 0 ? 'disabled' : ''}>📁 拆分到新專案</button>
+    ${count >= 2 ? `<button class="split-merge-btn" style="padding: 8px 18px; border: none; border-radius: 8px; background: #8b5cf6; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; margin-right: 4px">🤖 AI 合併收束</button>` : ''}
+    <button class="split-cancel-btn">取消</button>
+  `;
+  bar.querySelector('.split-confirm-btn').addEventListener('click', executeSplit);
+  if (count >= 2) {
+    const mergeBtn = bar.querySelector('.split-merge-btn');
+    if (mergeBtn) {
+      mergeBtn.addEventListener('click', executeAiMerge);
+      mergeBtn.addEventListener('mouseover', () => { mergeBtn.style.background = '#7c3aed'; });
+      mergeBtn.addEventListener('mouseout', () => { mergeBtn.style.background = '#8b5cf6'; });
+    }
+  }
+  bar.querySelector('.split-cancel-btn').addEventListener('click', exitSplitMode);
+}
+
+async function suggestStageVideos(stage, btn) {
+  // Clear any existing ghost nodes for this stage first
+  state.ghostNodes = state.ghostNodes.filter(g => g.stage !== stage);
+  
+  // Add a temporary loading/skeleton ghost card
+  const tempId = 'loading-ghost-' + stage;
+  state.ghostNodes.push({
+    id: tempId,
+    type: 'new-node',
+    stage: stage,
+    topic: '🤖 AI 正在分析現有脈絡...',
+    job: '分析中',
+    reason: '正在根據你的所有企劃與連線尋找缺口，約需 10-15 秒...',
+    isLoading: true
+  });
+  render();
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '🤖 AI 分析中...';
+
+  try {
+    const nodes = [...state.nodes.values()].map(n => ({
+      topic: n.main.topic,
+      job: n.main.job,
+      stage: n.positions.journey?.stage || '',
+      cta: n.main.cta || '',
+      userNotes: n.user || ''
+    }));
+    const connections = state.connections.map(c => ({
+      fromTopic: state.nodes.get(c.from)?.main.topic || '?',
+      toTopic: state.nodes.get(c.to)?.main.topic || '?'
+    }));
+
+    const res = await fetch('/api/suggest-column', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage, nodes, connections })
+    });
+    
+    // Remove loading ghost card
+    state.ghostNodes = state.ghostNodes.filter(g => g.id !== tempId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.suggestions && Array.isArray(data.suggestions)) {
+        data.suggestions.forEach((sug, i) => {
+          state.ghostNodes.push({
+            id: 'ghost-' + Date.now() + '-' + i,
+            type: 'new-node',
+            stage: stage,
+            topic: sug.topic,
+            job: sug.job || '',
+            reason: sug.reason || ''
+          });
+        });
+        showToast(`🤖 已生成 3 個 ${stage} 階段的影片建議`);
+      } else {
+        showToast('AI 回傳資料格式有誤，請再試一次。');
+      }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      showToast('AI 建議失敗: ' + (errData.error || '伺服器錯誤'));
+    }
+  } catch (err) {
+    state.ghostNodes = state.ghostNodes.filter(g => g.id !== tempId);
+    showToast('網絡連接失敗，請稍後再試');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+    render();
+  }
+}
+
+async function executeAiMerge() {
+  const selectedIds = [...state.splitSelected];
+  if (selectedIds.length < 2) return;
+
+  const confirmMerge = confirm(`確定要將這 ${selectedIds.length} 支影片企劃交給 AI 進行合併收束嗎？`);
+  if (!confirmMerge) return;
+
+  // Open the panel-parse to show loading state
+  hideAllPanels();
+  state.selectedNodeId = null;
+  const parsePanel = $('#panel-parse');
+  if (parsePanel) parsePanel.classList.remove('hidden');
+  
+  const parseContent = $('#parse-content');
+  if (parseContent) {
+    parseContent.innerHTML = `
+      <div class="panel-loading" style="padding: 24px; text-align: center">
+        <div id="merge-load-msg" style="font-weight: 600; color: #475569; margin-bottom: 8px">🤖 AI 正在分析影片重疊度，並生成合併方案...</div>
+        <div id="merge-load-sub" style="font-size:11px;color:#94a3b8;margin-top:6px">已等待 0 秒</div>
+      </div>
+    `;
+  }
+
+  const _mgT0 = Date.now();
+  clearInterval(window._mgTick);
+  window._mgTick = setInterval(() => {
+    const s = document.getElementById('merge-load-sub');
+    if (!s) { clearInterval(window._mgTick); return; }
+    const sec = Math.round((Date.now() - _mgT0) / 1000);
+    s.textContent = `已等待 ${sec} 秒（通常 15-25 秒）`;
+  }, 1000);
+
+  try {
+    const selectedNodes = selectedIds.map(id => {
+      const n = state.nodes.get(id);
+      return {
+        id: n.id,
+        topic: n.main.topic,
+        job: n.main.job,
+        stage: n.positions?.journey?.stage || '',
+        cta: n.main.cta || '',
+        userNotes: n.user || '',
+        angles: n.filmingAngles || []
+      };
+    });
+
+    const res = await fetch('/api/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedNodes }),
+    });
+    
+    clearInterval(window._mgTick);
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || '伺服器錯誤');
+    }
+
+    renderMergePreview(selectedIds, data.merged);
+  } catch (err) {
+    clearInterval(window._mgTick);
+    if (parseContent) {
+      parseContent.innerHTML = `<div class="panel-error" style="color: #dc2626; padding: 20px; font-weight: 500">合併分析失敗：${esc(err.message)}</div>`;
+    }
+  }
+}
+
+function renderMergePreview(selectedIds, merged) {
+  const parsePanel = $('#panel-parse');
+  if (parsePanel) parsePanel.classList.remove('hidden');
+  
+  const parseContent = $('#parse-content');
+  if (!parseContent) return;
+
+  const originalTopicsHtml = selectedIds.map(id => {
+    const n = state.nodes.get(id);
+    return `<li>• 「${esc(n.main.topic)}」</li>`;
+  }).join('');
+
+  const jobCls = { '吸引': 'job-attract', '培育': 'job-nurture', '轉換': 'job-convert' };
+
+  parseContent.innerHTML = `
+    <div class="merge-preview-container" style="padding: 4px">
+      <div style="font-size:12px;color:#64748b;margin-bottom:12px">
+        已分析選取的 ${selectedIds.length} 支影片，AI 建議進行以下合併收束：
+      </div>
+      
+      <div class="merge-section-title" style="font-weight:700; font-size:12px; color:#475569; margin: 12px 0 6px 0">🔴 要合併的影片</div>
+      <ul class="merge-original-list" style="margin: 0 0 12px 0; padding-left: 12px; font-size:12px; color:#475569; line-height:1.6; list-style-type: none">
+        ${originalTopicsHtml}
+      </ul>
+
+      <div class="merge-section-title" style="font-weight:700; font-size:12px; color:#475569; margin: 12px 0 6px 0">✨ AI 合併建議理由</div>
+      <div class="merge-explain-card" style="font-size:12px; color:#b45309; background:#fffbeb; padding:10px; border-radius:6px; margin-bottom:14px; line-height:1.5; border: 1px solid #fef3c7">
+        ${esc(merged.explain)}
+      </div>
+
+      <div class="merge-section-title" style="font-weight:700; font-size:12px; color:#475569; margin: 12px 0 6px 0">💡 合併後的新企劃</div>
+      <div class="merge-result-card" style="background:#f8fafc; border: 1px solid #e2e8f0; padding:12px; border-radius:8px; margin-bottom:16px">
+        <div style="font-weight:700; font-size:14px; color:#0f172a; margin-bottom:8px">標題：「${esc(merged.topic)}」</div>
+        <div style="margin-bottom:10px; display: flex; gap: 6px">
+          <span class="job-badge ${jobCls[merged.job] || ''}" style="display:inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600">${esc(merged.job)}</span>
+          <span class="job-badge" style="background:#e0f2fe; color:#0369a1; display:inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600">階段 ${esc(merged.stage)}</span>
+        </div>
+        
+        <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px">CTA 呼籲：</div>
+        <div style="font-size:12px; color:#475569; margin-bottom:10px; padding-left:4px">【${esc(merged.cta || '無')}】</div>
+        
+        <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px">整合後影片大綱：</div>
+        <div style="font-size:12px; color:#475569; line-height:1.5; margin-bottom:10px; background:#fff; padding:8px; border-radius:4px; border:1px solid #f1f5f9; white-space:pre-wrap">${esc(merged.userNotes)}</div>
+
+        ${merged.filmingAngles && merged.filmingAngles.length > 0 ? `
+          <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px">合併拍攝角度：</div>
+          <div style="font-size:11px; color:#64748b; line-height:1.4">
+            ${merged.filmingAngles.map((a, idx) => `
+              <div style="margin-bottom:6px">
+                <strong>${idx + 1}. ${esc(a.title)}</strong>
+                <div>${esc(a.cameraSetup)}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+
+      <div style="display:flex; gap:10px">
+        <button id="btn-confirm-ai-merge" class="ai-action-btn adopt" style="flex:1; padding:10px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px">確認執行合併</button>
+        <button id="btn-cancel-ai-merge" class="ai-action-btn dismiss" style="padding:10px; border: 1px solid #cbd5e1; border-radius: 6px; background:#fff; cursor: pointer; font-size: 13px">取消</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btn-confirm-ai-merge').addEventListener('click', () => {
+    applyAiMerge(selectedIds, merged);
+  });
+  document.getElementById('btn-cancel-ai-merge').addEventListener('click', () => {
+    exitSplitMode();
+    hideAllPanels();
+  });
+}
+
+function applyAiMerge(selectedIds, merged) {
+  pushUndo();
+
+  // Find average X, Y positions of deleted nodes for placing the new node
+  let totalX = 0, totalY = 0, count = 0;
+  for (const id of selectedIds) {
+    const node = state.nodes.get(id);
+    if (node && node.positions?.topic) {
+      totalX += node.positions.topic.x;
+      totalY += node.positions.topic.y;
+      count++;
+    }
+  }
+  const avgX = count > 0 ? Math.round(totalX / count) : 200;
+  const avgY = count > 0 ? Math.round(totalY / count) : 200;
+
+  // 1. Create new merged node
+  const newId = 'n' + Date.now() + Math.random().toString(36).slice(2, 6);
+  const newNode = {
+    id: newId,
+    main: {
+      topic: merged.topic,
+      job: merged.job,
+      jobSecondary: '',
+      cta: merged.cta,
+      trustType: '',
+    },
+    user: merged.userNotes,
+    topicPhase: '',
+    aiResearch: {
+      insight: merged.explain || '',
+      suggestedHook: '',
+      suggestedJob: merged.job,
+      suggestedStage: merged.stage,
+      ctaSpoken: merged.cta,
+      audienceCares: '',
+      searchKeywords: '',
+    },
+    filmingAngles: merged.filmingAngles || [],
+    status: 'planned',
+    positions: {
+      topic: { x: avgX, y: avgY },
+      material: { column: merged.job === '吸引' ? 'short' : 'long', order: 0 },
+      journey: { stage: merged.stage, order: 0 }
+    }
+  };
+  state.nodes.set(newId, newNode);
+
+  // 2. Re-route connections:
+  const updatedConnections = [];
+  const selectedSet = new Set(selectedIds);
+  for (const conn of state.connections) {
+    const fromSelected = selectedSet.has(conn.from);
+    const toSelected = selectedSet.has(conn.to);
+    
+    if (fromSelected && toSelected) {
+      // Internal connection, discard
+      continue;
+    }
+    
+    if (fromSelected) {
+      updatedConnections.push({ from: newId, to: conn.to });
+    } else if (toSelected) {
+      updatedConnections.push({ from: conn.from, to: newId });
+    } else {
+      updatedConnections.push(conn);
+    }
+  }
+  
+  // Deduplicate connections
+  const connKeys = new Set();
+  state.connections = updatedConnections.filter(c => {
+    const key = `${c.from}->${c.to}`;
+    if (connKeys.has(key)) return false;
+    connKeys.add(key);
+    return true;
+  });
+
+  // 3. Delete old nodes
+  for (const id of selectedIds) {
+    state.nodes.delete(id);
+  }
+
+  // 4. Save and exit split mode
+  saveState();
+  exitSplitMode();
+  hideAllPanels();
+  showToast(`🔀 已成功收束合併為「${merged.topic}」`);
+}
+
+function executeSplit() {
+  const selectedIds = [...state.splitSelected];
+  if (selectedIds.length === 0) return;
+
+  const name = window.prompt('新專案名稱：');
+  if (!name) return;
+
+  // Generate new project
+  const newProjectId = 'p' + Date.now();
+  const list = getProjectList();
+  list.push({ id: newProjectId, name, createdAt: Date.now(), updatedAt: Date.now(), nodeCount: selectedIds.length });
+  saveProjectList(list);
+
+  // Clone selected nodes with new IDs into the new project data
+  const idMap = new Map(); // old ID → new ID
+  const newNodes = [];
+  for (const oldId of selectedIds) {
+    const oldNode = state.nodes.get(oldId);
+    if (!oldNode) continue;
+    const newId = 'n' + Date.now() + Math.random().toString(36).slice(2, 6);
+    idMap.set(oldId, newId);
+    const cloned = JSON.parse(JSON.stringify(oldNode));
+    cloned.id = newId;
+    newNodes.push([newId, cloned]);
+  }
+
+  // Clone connections that are between selected nodes
+  const newConnections = [];
+  for (const conn of state.connections) {
+    if (idMap.has(conn.from) && idMap.has(conn.to)) {
+      newConnections.push({ from: idMap.get(conn.from), to: idMap.get(conn.to) });
+    }
+  }
+
+  // Save the new project data
+  const newData = {
+    currentView: state.currentView,
+    nodes: newNodes,
+    connections: newConnections,
+    dismissedSuggestions: [],
+    topicListOrder: [],
+    projectName: name,
+  };
+  const newStorageKey = 'content-canvas-v2-' + newProjectId;
+  localStorage.setItem(newStorageKey, JSON.stringify(newData));
+  // Also save to server
+  fetch('/api/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...newData, projectId: newProjectId }),
+  }).catch(() => {});
+
+  // Remove selected nodes from current project
+  pushUndo();
+  for (const oldId of selectedIds) {
+    state.nodes.delete(oldId);
+  }
+  // Prune dangling connections
+  state.connections = state.connections.filter(c => state.nodes.has(c.from) && state.nodes.has(c.to));
+  if (state.selectedNodeId && !state.nodes.has(state.selectedNodeId)) state.selectedNodeId = null;
+  saveState();
+
+  exitSplitMode();
+  renderProjectSelect();
+  showToast(`已拆分 ${selectedIds.length} 個節點到「${name}」`);
+}
+
 // ── Init ──
 async function init() {
   // Always bind events first (canvas/button handlers)
@@ -5131,4 +5670,4 @@ function refreshVersionBadge() {
 }
 refreshVersionBadge();
 
-window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript, showProjectPicker, hideProjectPicker };
+window._cs = { state, render, saveState, createNode, deleteNode, updateNode, renderMaterialView, resolveCollisions, highlightConnections, analyzeCanvas, runGlobalReview, adoptGhost, dismissGhost, expandContent, renderPanel, createProject, deleteProject, switchProject, renderProjectSelect, generateScript, showProjectPicker, hideProjectPicker, enterSplitMode, exitSplitMode };

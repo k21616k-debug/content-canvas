@@ -25,11 +25,17 @@
     <span class="view-tabs-note" title="三個視圖顯示同一批影片，只是換角度看">同一批影片・三種視角</span>
     <div class="header-right">
       <span id="node-count">0 個節點</span>
-      <button id="btn-connect" class="header-btn header-btn-dim" title="連線模式" aria-label="連線模式">🔗</button>
-      <button id="btn-export" class="header-btn" title="匯出所有節點為 Markdown">↓ 匯出</button>
-      <button id="btn-review" class="header-btn review-btn" title="AI 全局檢討">🧩 檢討</button>
+      <div class="more-tools-wrap">
+        <button id="btn-more-tools" class="header-btn header-btn-dim" title="更多工具">⋯</button>
+        <div id="more-tools-menu" class="more-tools-menu hidden">
+          <button id="btn-connect" class="more-tool-item" title="連線模式">🔗 連線模式</button>
+          <button id="btn-export" class="more-tool-item" title="匯出所有節點為 Markdown">↓ 匯出</button>
+          <button id="btn-split" class="more-tool-item" title="對多個節點進行合併或拆分專案">🔀 整理專案（合併/拆分）</button>
+          <button id="btn-help" class="more-tool-item help-btn" title="鍵盤快捷鍵 (?)">? 快捷鍵</button>
+        </div>
+      </div>
+      <button id="btn-review" class="header-btn review-btn" title="AI 缺口分析">🧩 缺口</button>
       <button id="btn-brief" class="header-btn primary" title="生成全局製作排程 Brief">生成 Brief</button>
-      <button id="btn-help" class="header-btn help-btn" title="鍵盤快捷鍵 (?)" aria-label="鍵盤快捷鍵">?</button>
     </div>
   </header>
 
@@ -75,17 +81,15 @@
           <p class="hint">雙擊畫布或按「＋」新增節點</p>
           <div class="onboarding-steps" id="onboarding-steps">
             <div class="onboarding-steps-header">
-              <p class="onboarding-label">快速上手流程</p>
+              <p class="onboarding-label">三步完成一支影片企劃</p>
               <button class="guide-close-btn" title="不再顯示" aria-label="關閉快速上手說明">✕</button>
             </div>
             <ol>
-              <li><strong>建立節點</strong> — 每支影片一個節點，填主題、選購買階段</li>
-              <li><strong>✨ AI 擴寫企劃</strong> — 點節點，在「筆記」填你知道的（規格／價格／方向），按「✨ AI 擴寫企劃」→ AI 上網查證給你切入角度、Hook、拍攝方向</li>
-              <li><strong>✅ 採納研究結果</strong> — 一鍵把 AI 的 CTA／目的／階段／洞察填進節點</li>
-              <li><strong>🌿 發散</strong> — 從一支片衍生 3 個新影片點子，挑要的「採用」接成新節點（重複 2–4 把漏斗鋪滿）</li>
-              <li><strong>購買階段</strong> — 切此視圖確認 A 認知→D 安心都有片（D 安心 AI 不代生，點 D 欄「＋」手動補你的售後事實）</li>
-              <li><strong>🧩 檢討 → 生成 Brief</strong> — 讓 AI 找策略缺口，再按「生成 Brief」產出可拍的製作文件</li>
+              <li><strong>新增節點</strong> — 雙擊畫布或按「＋」，一支影片一個節點，填主題和你知道的產品筆記</li>
+              <li><strong>✨ AI 擴寫</strong> — 按「✨ AI 擴寫企劃」，AI 上網查規格、找切入角度、給 Hook 和拍攝清單；按「✅ 採納」一鍵確認</li>
+              <li><strong>生成 Brief</strong> — 確認 Hook 和 CTA 後按「生成 Brief」，得到可直接帶去拍攝的製作文件</li>
             </ol>
+            <p style="font-size:11px;color:#94a3b8;margin-top:8px">想找缺口？按「🧩 缺口」讓 AI 告訴你哪個階段缺片、哪兩支可合併、哪支最適合現在拍</p>
           </div>
         </div>
       </div>
@@ -105,7 +109,7 @@
       </div>
       <div id="panel-review" class="hidden">
         <div class="panel-header">
-          <h2>🧩 AI 全局檢討</h2>
+          <h2>🧩 AI 缺口分析</h2>
           <button id="review-close" title="關閉" aria-label="關閉 AI 檢討">✕</button>
         </div>
         <div id="review-content"></div>

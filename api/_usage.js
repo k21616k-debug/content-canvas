@@ -1,7 +1,7 @@
 // In-memory usage accumulator (resets on server restart)
-// Pricing: claude-sonnet-4-6 — $3/MTok input, $15/MTok output
-const PRICE_INPUT = 3 / 1_000_000;
-const PRICE_OUTPUT = 15 / 1_000_000;
+// Pricing: gemini-2.5-flash — $0.15/MTok input, $0.60/MTok output (under 200k)
+const PRICE_INPUT = 0.15 / 1_000_000;
+const PRICE_OUTPUT = 0.60 / 1_000_000;
 
 const usage = {
   expand:   { calls: 0, inputTokens: 0, outputTokens: 0 },

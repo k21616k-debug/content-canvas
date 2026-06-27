@@ -4,9 +4,9 @@
     {
       "name": "canvas",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
-      "autoPort": true,
-      "cwd": "/Users/chunhuiliu/Moto-Claude Code/content-canvas"
+      "runtimeArgs": ["--watch", "--env-file=.env", "server.js"],
+      "port": 3456,
+      "cwd": "/Users/chunhuiliu/Andrewspot-AI-Core/專案/content-canvas"
     }
   ]
 }

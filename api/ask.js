@@ -1,9 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat, cleanJson } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -66,17 +67,16 @@ actions 是你建議的具體操作，只在你認為應該修改畫布時才加
 - 每個 action 必須有 label（顯示在按鈕上，5 字以內）
 - actions 最多 4 個`;
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { text, inputTokens, outputTokens } = await aiChat(prompt, { maxTokens: 1000 });
 
-    addUsage('ask', msg.usage.input_tokens, msg.usage.output_tokens);
-    const text = msg.content[0].text.trim();
-    const s = text.indexOf('{'); const e = text.lastIndexOf('}');
-    const clean = (s >= 0 && e > s) ? text.slice(s, e + 1) : text;
-    const result = JSON.parse(clean);
+    addUsage('ask', inputTokens, outputTokens);
+    const clean = cleanJson(text);
+    let result;
+    try {
+      result = JSON.parse(clean);
+    } catch {
+      result = { answer: clean.substring(0, 500), actions: [] };
+    }
 
     return res.status(200).json(result);
   } catch (err) {

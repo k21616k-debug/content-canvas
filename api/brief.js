@@ -1,9 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat, cleanJson } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -43,15 +44,10 @@ export default async function handler(req, res) {
 - 必留元素要具體到「拍什麼畫面」
 - 短片潛力點要具體到「哪個動作/瞬間」`;
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { text, inputTokens, outputTokens } = await aiChat(prompt, { maxTokens: 2000 });
 
-    addUsage('brief', msg.usage.input_tokens, msg.usage.output_tokens);
-    const text = msg.content[0].text.trim();
-    const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+    addUsage('brief', inputTokens, outputTokens);
+    const clean = cleanJson(text);
     let result;
     try { result = JSON.parse(clean); } catch { result = { job: clean.substring(0, 200), error: 'JSON parse failed' }; }
 

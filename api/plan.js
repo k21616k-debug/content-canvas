@@ -1,39 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat, aiChatWithSearch, cleanJson } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
-async function runWithSearch(messages, model, maxTokens) {
-  const history = messages.map(m => ({ ...m }));
-  let totalIn = 0, totalOut = 0, searchCount = 0;
-  let accText = '';
-  for (let round = 0; round < 5; round++) {
-    const resp = await anthropic.messages.create({
-      model,
-      max_tokens: maxTokens,
-      tools: [{
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 3,
-        user_location: { type: 'approximate', country: 'TW', timezone: 'Asia/Taipei' },
-      }],
-      messages: history,
-    });
-    totalIn  += resp.usage?.input_tokens  ?? 0;
-    totalOut += resp.usage?.output_tokens ?? 0;
-    searchCount += resp.usage?.server_tool_use?.web_search_requests ?? 0;
-    const roundText = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    if (resp.stop_reason === 'pause_turn') {
-      accText += roundText;
-      history.push({ role: 'assistant', content: resp.content });
-      continue;
-    }
-    return { text: (accText + roundText).trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
-  }
-  return { text: accText.trim(), inputTokens: totalIn, outputTokens: totalOut, searchCount };
-}
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -63,11 +34,7 @@ ${fragmentText.substring(0, 400)}
 
     let webFacts = '';
     try {
-      const searchResult = await runWithSearch(
-        [{ role: 'user', content: planSearchPrompt }],
-        'claude-haiku-4-5-20251001',
-        2000
-      );
+      const searchResult = await aiChatWithSearch(planSearchPrompt, { maxTokens: 2000 });
       addUsage('plan', searchResult.inputTokens, searchResult.outputTokens);
       webFacts = searchResult.text;
       if (!searchResult.searchCount) console.warn(`[plan] pre-pass ran 0 web searches — market insights may rest on training data`);
@@ -147,18 +114,10 @@ JSON，不要加 markdown code block：
 - angles 每支影片 3-5 個，要具體到可以排拍攝表
 - aiQuestions 只問最能改變計劃品質的問題，不要問可有可無的`;
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { text, inputTokens, outputTokens } = await aiChat(prompt, { maxTokens: 16000 });
+    addUsage('plan', inputTokens, outputTokens);
 
-    addUsage('plan', msg.usage.input_tokens, msg.usage.output_tokens);
-
-    const text = msg.content[0].text.trim();
-    const s = text.indexOf('{');
-    const e = text.lastIndexOf('}');
-    const clean = s >= 0 && e > s ? text.slice(s, e + 1) : text;
+    const clean = cleanJson(text);
 
     let result;
     try {

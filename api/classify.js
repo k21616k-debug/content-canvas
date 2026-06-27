@@ -1,9 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { aiChat, cleanJson } from './ai-client.js';
 import { addUsage } from './_usage.js';
 
-const anthropic = new Anthropic();
-
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -43,15 +44,12 @@ ${userNotes ? `補充資訊：${userNotes}` : ''}
 如果影片有明顯的次要用途，填 secondaryJob（例：開箱影片主要是培育，但也有吸引新觀眾的作用）。
 沒有明顯的次要用途就給空字串。`;
 
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 400,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const { text, inputTokens, outputTokens } = await aiChat(prompt, { maxTokens: 1000 });
 
-    addUsage('classify', msg.usage.input_tokens, msg.usage.output_tokens);
-    const text = msg.content[0].text.trim();
-    const clean = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+    console.log('Classify raw:', JSON.stringify(text));
+    addUsage('classify', inputTokens, outputTokens);
+    const clean = cleanJson(text);
+    console.log('Classify clean:', JSON.stringify(clean));
     const result = JSON.parse(clean);
 
     // Backward compatibility: also set "job" for existing code
